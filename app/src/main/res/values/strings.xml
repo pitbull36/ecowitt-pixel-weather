@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ecowitt Atmosphere</string>
+    <string name="widget_name">Ecowitt Home Weather</string>
+    <string name="widget_description">Live temperature, humidity, dew point, and comfort across your GW1200 rooms and outdoor sensors.</string>
+</resources>
