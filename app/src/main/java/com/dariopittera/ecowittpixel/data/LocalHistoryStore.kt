@@ -444,6 +444,7 @@ class LocalHistoryStore(private val context: Context) :
 
     fun serializeSnapshotJson(snapshot: HomeAtmosphereSnapshot): String {
         val nowMs = System.currentTimeMillis()
+        val cutoff7d = nowMs - 7L * 24L * 3600L * 1000L
         val cutoff24h = nowMs - 24L * 3600L * 1000L
         val root = JSONObject().apply {
             put("source", snapshot.source.name)
@@ -473,13 +474,29 @@ class LocalHistoryStore(private val context: Context) :
                     if (room.pressureTrend3hHpa != null) {
                         put("pressureTrend3hHpa", room.pressureTrend3hHpa.toDouble())
                     }
+                    // Preserve both 7-day (1 week) history and dense 24h history for watch scrubbing
+                    val olderWeek = room.history.filter { it.timestampMs in cutoff7d until cutoff24h }
                     val recent24h = room.history.filter { it.timestampMs >= cutoff24h }.ifEmpty {
                         room.history.takeLast(48)
                     }
-                    val step = (recent24h.size / 48).coerceAtLeast(1)
+                    val sampledPts = ArrayList<HistoricalPoint>()
+                    if (olderWeek.isNotEmpty()) {
+                        val weekStep = (olderWeek.size / 60).coerceAtLeast(1)
+                        for (i in olderWeek.indices step weekStep) {
+                            sampledPts.add(olderWeek[i])
+                        }
+                    }
+                    if (recent24h.isNotEmpty()) {
+                        val dayStep = (recent24h.size / 48).coerceAtLeast(1)
+                        for (i in recent24h.indices step dayStep) {
+                            sampledPts.add(recent24h[i])
+                        }
+                        if ((recent24h.size - 1) % dayStep != 0) {
+                            sampledPts.add(recent24h.last())
+                        }
+                    }
                     val histArr = JSONArray()
-                    for (i in recent24h.indices step step) {
-                        val pt = recent24h[i]
+                    for (pt in sampledPts) {
                         histArr.put(
                             JSONObject().apply {
                                 put("t", pt.timestampMs)
@@ -487,19 +504,6 @@ class LocalHistoryStore(private val context: Context) :
                                 put("h", pt.humidityPct.toDouble())
                                 if (pt.pressureHpa != null) {
                                     put("p", pt.pressureHpa.toDouble())
-                                }
-                            }
-                        )
-                    }
-                    if (recent24h.isNotEmpty() && (recent24h.size - 1) % step != 0) {
-                        val lastPt = recent24h.last()
-                        histArr.put(
-                            JSONObject().apply {
-                                put("t", lastPt.timestampMs)
-                                put("c", lastPt.temperatureC.toDouble())
-                                put("h", lastPt.humidityPct.toDouble())
-                                if (lastPt.pressureHpa != null) {
-                                    put("p", lastPt.pressureHpa.toDouble())
                                 }
                             }
                         )
@@ -537,7 +541,7 @@ class LocalHistoryStore(private val context: Context) :
                 }
                 val chId = rObj.getString("channelId")
                 val finalHistory = historyPts.ifEmpty {
-                    loadChannelHistory(chId, System.currentTimeMillis() - 24L * 3600L * 1000L)
+                    loadChannelHistory(chId, System.currentTimeMillis() - 7L * 24L * 3600L * 1000L)
                 }
                 rooms.add(
                     SensorRoomState(

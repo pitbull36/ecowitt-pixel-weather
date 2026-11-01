@@ -544,10 +544,27 @@ private fun DrawScope.drawWatchRoomDiorama(
     // 3. Archetype furniture
     when (room.archetype) {
         RoomArchetype.LIVING_ROOM -> {
-            // Library bookcase + TV + Sofa + Coffee Table
+            // Library bookcase with open wooden shelves, sparse neutral books, and an orb ornament + TV + Sofa + Coffee Table
             drawWatchIsoPrism(
                 cam, -0.87f, -0.64f, -0.78f, 0.32f, 0.02f, 0.98f,
-                Color(0xFF6D4C41), Color(0xFF4E342E), Color(0xFF5D4037), WatchThermalAmber.copy(alpha = 0.7f)
+                Color(0xFF6D4C41), Color(0xFF4E342E), Color(0xFF3E2723), WatchThermalAmber.copy(alpha = 0.7f)
+            )
+            for (shelf in 0..2) {
+                val sz = 0.22f + shelf * 0.26f
+                drawWatchIsoPrism(
+                    cam, -0.85f, -0.63f, -0.74f, 0.28f, sz, sz + 0.03f,
+                    Color(0xFF8D6E63), Color(0xFF5D4037), Color(0xFF6D4C41), WatchThermalAmber.copy(alpha = 0.45f)
+                )
+            }
+            // Sparse neutral books on middle shelf + small ceramic orb on top shelf
+            drawWatchIsoPrism(
+                cam, -0.80f, -0.66f, -0.64f, -0.55f, 0.51f, 0.66f,
+                Color(0xFFCFD8DC), Color(0xFF78909C), Color(0xFF90A4AE), Color(0xFFB0BEC5)
+            )
+            drawCircle(
+                color = Color(0xFFD7CCC8),
+                radius = cam.scale * 0.038f,
+                center = cam.project(-0.72f, 0.06f, 0.82f)
             )
             drawWatchIsoPrism(
                 cam, -0.30f, 0.50f, -0.84f, -0.75f, 0.28f, 0.82f,

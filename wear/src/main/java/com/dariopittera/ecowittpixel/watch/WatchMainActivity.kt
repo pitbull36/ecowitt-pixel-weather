@@ -49,6 +49,7 @@ class WatchMainActivity : ComponentActivity() {
                 val carouselIndex by viewModel.carouselIndex.collectAsState()
                 val detailChannelId by viewModel.detailChannelId.collectAsState()
                 val scrubFraction by viewModel.historyScrubFraction.collectAsState()
+                val detailIsWeekRange by viewModel.detailIsWeekRange.collectAsState()
                 val isAmbient by viewModel.isAmbient.collectAsState()
                 val ambientTick by viewModel.ambientMinuteTick.collectAsState()
                 val statusText by viewModel.statusText.collectAsState()
@@ -73,6 +74,7 @@ class WatchMainActivity : ComponentActivity() {
                     carouselIndex = carouselIndex,
                     detailChannelId = detailChannelId,
                     historyScrubFraction = scrubFraction,
+                    detailIsWeekRange = detailIsWeekRange,
                     isAmbient = isAmbient,
                     ambientMinuteTick = ambientTick,
                     statusText = statusText,
@@ -83,6 +85,7 @@ class WatchMainActivity : ComponentActivity() {
                     onOpenRoomDetail = viewModel::openRoomDetail,
                     onCloseRoomDetail = viewModel::closeRoomDetail,
                     onResetDetailView = viewModel::resetDetailView,
+                    onToggleDetailHistoryRange = viewModel::toggleDetailHistoryRange,
                     onDetailCrownScroll = viewModel::onDetailCrownScroll,
                     onSyncNow = { viewModel.syncHybridNow(quiet = false) },
                     onCheckWatchOta = viewModel::checkAndInstallWatchOta

@@ -1146,7 +1146,7 @@ private fun DrawScope.drawSixPointIceCrystal(
 
 /**
  * Redesigned Living Room featuring:
- * 1. Floor-to-ceiling library bookcase with colourful books along the left wall
+ * 1. Floor-to-ceiling library bookcase with open wooden shelves, sparse neutral books, and minimalist ornaments
  * 2. Widescreen TV on a media console along the right back wall
  * 3. Plush sofa and coffee table facing the TV
  */
@@ -1156,36 +1156,128 @@ private fun DrawScope.drawLivingRoomFurniture(cam: IsoCamera) {
         cam, -0.87f, -0.64f, -0.78f, 0.32f, 0.02f, 1.02f,
         topColor = Color(0xFF6D4C41),
         leftColor = Color(0xFF4E342E),
-        rightColor = Color(0xFF5D4037)
-    )
-    val bookPalette = listOf(
-        Color(0xFFEF5350),
-        Color(0xFF42A5F5),
-        Color(0xFFFFCA28),
-        Color(0xFF66BB6A),
-        Color(0xFFAB47BC)
+        rightColor = Color(0xFF3E2723)
     )
     for (shelf in 0..3) {
         val sz = 0.12f + shelf * 0.22f
-        // Wooden shelf plank
+        // Open wooden shelf plank
         drawIsoPrism(
-            cam, -0.85f, -0.63f, -0.74f, 0.28f, sz, sz + 0.035f,
+            cam, -0.85f, -0.63f, -0.74f, 0.28f, sz, sz + 0.032f,
             topColor = Color(0xFF8D6E63),
             leftColor = Color(0xFF5D4037),
             rightColor = Color(0xFF6D4C41)
         )
-        // Row of colourful books on each shelf
-        for (b in 0..3) {
-            val by = -0.68f + b * 0.22f
-            val bookCol = bookPalette[(shelf + b) % bookPalette.size]
-            drawIsoPrism(
-                cam, -0.82f, -0.65f, by, by + 0.14f, sz + 0.035f, sz + 0.18f,
-                topColor = bookCol,
-                leftColor = bookCol.copy(alpha = 0.8f),
-                rightColor = bookCol.copy(alpha = 0.9f)
-            )
-        }
     }
+
+    // Shelf 0 (bottom, zBase = 0.152f): two flat stacked art books on the left, empty centre, low linen box on the right
+    val z0 = 0.152f
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.66f, -0.48f, z0, z0 + 0.032f,
+        topColor = Color(0xFFD7CCC8),
+        leftColor = Color(0xFFA1887F),
+        rightColor = Color(0xFFBCAAA4)
+    )
+    drawIsoPrism(
+        cam, -0.79f, -0.67f, -0.64f, -0.50f, z0 + 0.032f, z0 + 0.058f,
+        topColor = Color(0xFF90A4AE),
+        leftColor = Color(0xFF607D8B),
+        rightColor = Color(0xFF78909C)
+    )
+    drawIsoPrism(
+        cam, -0.81f, -0.66f, 0.02f, 0.20f, z0, z0 + 0.095f,
+        topColor = Color(0xFFBCAAA4),
+        leftColor = Color(0xFF8D6E63),
+        rightColor = Color(0xFFA1887F)
+    )
+
+    // Shelf 1 (second, zBase = 0.372f): three slim upright neutral book spines on the left + small ceramic orb ornament on the right
+    val z1 = 0.372f
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.66f, -0.625f, z1, z1 + 0.145f,
+        topColor = Color(0xFFCFD8DC),
+        leftColor = Color(0xFF90A4AE),
+        rightColor = Color(0xFFB0BEC5)
+    )
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.62f, -0.585f, z1, z1 + 0.16f,
+        topColor = Color(0xFFA1887F),
+        leftColor = Color(0xFF6D4C41),
+        rightColor = Color(0xFF8D6E63)
+    )
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.58f, -0.545f, z1, z1 + 0.13f,
+        topColor = Color(0xFF78909C),
+        leftColor = Color(0xFF455A64),
+        rightColor = Color(0xFF546E7A)
+    )
+    val orbCenter = cam.project(-0.72f, 0.08f, z1 + 0.052f)
+    drawCircle(
+        color = Color(0xFFD7CCC8),
+        radius = cam.scale * 0.038f,
+        center = orbCenter
+    )
+    drawCircle(
+        color = Color(0xFF8D6E63),
+        radius = cam.scale * 0.038f,
+        center = orbCenter,
+        style = Stroke(width = 1.2f)
+    )
+
+    // Shelf 2 (third, zBase = 0.592f): minimalist ceramic vase ornament in the middle-left + two slim books on the right
+    val z2 = 0.592f
+    val vaseBase = cam.project(-0.72f, -0.38f, z2 + 0.055f)
+    val vaseNeck = cam.project(-0.72f, -0.38f, z2 + 0.105f)
+    val stemTip = cam.project(-0.72f, -0.34f, z2 + 0.155f)
+    drawLine(
+        color = Color(0xFF81C784),
+        start = vaseNeck,
+        end = stemTip,
+        strokeWidth = 1.8f
+    )
+    drawCircle(
+        color = Color(0xFFECEFF1),
+        radius = cam.scale * 0.036f,
+        center = vaseBase
+    )
+    drawLine(
+        color = Color(0xFFCFD8DC),
+        start = vaseBase,
+        end = vaseNeck,
+        strokeWidth = cam.scale * 0.032f
+    )
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, 0.06f, 0.095f, z2, z2 + 0.145f,
+        topColor = Color(0xFFD7CCC8),
+        leftColor = Color(0xFF8D6E63),
+        rightColor = Color(0xFFBCAAA4)
+    )
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, 0.10f, 0.135f, z2, z2 + 0.13f,
+        topColor = Color(0xFF90A4AE),
+        leftColor = Color(0xFF546E7A),
+        rightColor = Color(0xFF78909C)
+    )
+
+    // Shelf 3 (top, zBase = 0.812f): two slim upright books on the left + small minimalist framed ornament on the right
+    val z3 = 0.812f
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.62f, -0.585f, z3, z3 + 0.14f,
+        topColor = Color(0xFFBCAAA4),
+        leftColor = Color(0xFF795548),
+        rightColor = Color(0xFF8D6E63)
+    )
+    drawIsoPrism(
+        cam, -0.80f, -0.66f, -0.58f, -0.545f, z3, z3 + 0.125f,
+        topColor = Color(0xFFCFD8DC),
+        leftColor = Color(0xFF78909C),
+        rightColor = Color(0xFF90A4AE)
+    )
+    drawIsoPrism(
+        cam, -0.78f, -0.67f, 0.02f, 0.15f, z3, z3 + 0.12f,
+        topColor = Color(0xFFECEFF1),
+        leftColor = Color(0xFF90A4AE),
+        rightColor = Color(0xFFD7CCC8)
+    )
 
     // 2. Widescreen TV + low oak media console on the right back wall (x = -0.38..0.58, y = -0.86..-0.58)
     drawIsoPrism(

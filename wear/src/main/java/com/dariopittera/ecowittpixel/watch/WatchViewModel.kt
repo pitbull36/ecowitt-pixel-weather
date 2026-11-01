@@ -63,9 +63,13 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     private val _detailChannelId = MutableStateFlow<String?>(null)
     val detailChannelId: StateFlow<String?> = _detailChannelId.asStateFlow()
 
-    // Normalized 0f..1f scrub position along the 24h history (1f = live now)
+    // Normalized 0f..1f scrub position along the 24h or 1w history (1f = live now)
     private val _historyScrubFraction = MutableStateFlow(1f)
     val historyScrubFraction: StateFlow<Float> = _historyScrubFraction.asStateFlow()
+
+    // False = 24h history scrub, True = 7-day (1 week) history scrub
+    private val _detailIsWeekRange = MutableStateFlow(false)
+    val detailIsWeekRange: StateFlow<Boolean> = _detailIsWeekRange.asStateFlow()
 
     private val _isAmbient = MutableStateFlow(false)
     val isAmbient: StateFlow<Boolean> = _isAmbient.asStateFlow()
@@ -76,7 +80,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     private val _statusText = MutableStateFlow("Syncing with Pixel 10...")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
 
-    private val _otaLabel = MutableStateFlow("Watch OTA update")
+    private val _otaLabel = MutableStateFlow("No updates (v${BuildConfig.VERSION_NAME})")
     val otaLabel: StateFlow<String> = _otaLabel.asStateFlow()
 
     private val _isCheckingOta = MutableStateFlow(false)
@@ -154,6 +158,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         }
         WatchSyncWorker.schedulePeriodicWatchSync(application)
         syncHybridNow(quiet = false)
+        checkWatchOtaStatusQuietly()
         startAutoRefresh()
     }
 
@@ -344,6 +349,11 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         _historyScrubFraction.value = 1f
     }
 
+    fun toggleDetailHistoryRange() {
+        _detailIsWeekRange.value = !_detailIsWeekRange.value
+        _historyScrubFraction.value = 1f
+    }
+
     fun onDetailCrownScroll(scrollPixels: Float) {
         val normDelta = (scrollPixels / 180f).coerceIn(-0.15f, 0.15f)
         _historyScrubFraction.value = (_historyScrubFraction.value + normDelta * 0.45f).coerceIn(0f, 1f)
@@ -361,11 +371,29 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         reloadFromLocalCache()
     }
 
+    private fun checkWatchOtaStatusQuietly() {
+        viewModelScope.launch {
+            val result = otaUpdater.checkForUpdate(
+                githubRepo = BuildConfig.GITHUB_REPO,
+                preferWatchAsset = true
+            )
+            result.onSuccess { release ->
+                val currentBaseVersion = BuildConfig.VERSION_CODE % 1000
+                val remoteBaseVersion = (release?.versionCode ?: 0) % 1000
+                _otaLabel.value = if (release != null && remoteBaseVersion > currentBaseVersion) {
+                    "Update available: ${release.tagName}"
+                } else {
+                    "No updates (v${BuildConfig.VERSION_NAME})"
+                }
+            }
+        }
+    }
+
     fun checkAndInstallWatchOta() {
         if (_isCheckingOta.value) return
         viewModelScope.launch {
             _isCheckingOta.value = true
-            _otaLabel.value = "Checking GitHub..."
+            _otaLabel.value = "Checking updates..."
             val result = otaUpdater.checkForUpdate(
                 githubRepo = BuildConfig.GITHUB_REPO,
                 preferWatchAsset = true
@@ -396,12 +424,12 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     } else {
                         _isCheckingOta.value = false
-                        _otaLabel.value = "Up to date (v${BuildConfig.VERSION_NAME})"
+                        _otaLabel.value = "No updates (v${BuildConfig.VERSION_NAME})"
                     }
                 },
                 onFailure = {
                     _isCheckingOta.value = false
-                    _otaLabel.value = "OTA check failed"
+                    _otaLabel.value = "No updates (v${BuildConfig.VERSION_NAME})"
                 }
             )
         }

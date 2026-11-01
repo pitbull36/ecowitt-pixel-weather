@@ -72,6 +72,7 @@ fun WatchRootScreen(
     carouselIndex: Int,
     detailChannelId: String?,
     historyScrubFraction: Float,
+    detailIsWeekRange: Boolean,
     isAmbient: Boolean,
     ambientMinuteTick: Int,
     statusText: String,
@@ -82,6 +83,7 @@ fun WatchRootScreen(
     onOpenRoomDetail: (String) -> Unit,
     onCloseRoomDetail: () -> Unit,
     onResetDetailView: () -> Unit,
+    onToggleDetailHistoryRange: () -> Unit,
     onDetailCrownScroll: (Float) -> Unit,
     onSyncNow: () -> Unit,
     onCheckWatchOta: () -> Unit,
@@ -98,10 +100,12 @@ fun WatchRootScreen(
             settings = settings,
             breaches = roomBreaches,
             scrubFraction = historyScrubFraction,
+            isWeekRange = detailIsWeekRange,
             isAmbient = isAmbient,
             ambientMinuteTick = ambientMinuteTick,
             onBack = onCloseRoomDetail,
             onResetView = onResetDetailView,
+            onToggleHistoryRange = onToggleDetailHistoryRange,
             onCrownScroll = onDetailCrownScroll,
             modifier = modifier
         )
@@ -326,8 +330,8 @@ private fun WatchMainCarouselScreen(
 
 /**
  * Level 2: Tapped Room Detail Screen.
- * Rotating the crown scrubs the 24h history timeline (updating the top temperature arc,
- * bottom humidity arc, and 3D room state through time).
+ * Rotating the crown scrubs either the 24h or 1w (7-day) history timeline (updating the top
+ * temperature arc, bottom humidity arc, and 3D room state through time).
  */
 @Composable
 private fun WatchRoomDetailScreen(
@@ -335,10 +339,12 @@ private fun WatchRoomDetailScreen(
     settings: AppSettings,
     breaches: List<RoomAlertBreach>,
     scrubFraction: Float,
+    isWeekRange: Boolean,
     isAmbient: Boolean,
     ambientMinuteTick: Int,
     onBack: () -> Unit,
     onResetView: () -> Unit,
+    onToggleHistoryRange: () -> Unit,
     onCrownScroll: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -351,15 +357,20 @@ private fun WatchRoomDetailScreen(
         runCatching { focusRequester.requestFocus() }
     }
 
-    val history24h = remember(room.history, room.lastUpdatedMs) {
-        val cutoff = System.currentTimeMillis() - 24L * 3600L * 1000L
+    val historyWindow = remember(room.history, room.lastUpdatedMs, isWeekRange) {
+        val windowDurationMs = if (isWeekRange) {
+            7L * 24L * 3600L * 1000L
+        } else {
+            24L * 3600L * 1000L
+        }
+        val cutoff = System.currentTimeMillis() - windowDurationMs
         room.history.filter { it.timestampMs >= cutoff }.ifEmpty { room.history }
     }
 
-    val isLiveNow = scrubFraction >= 0.97f || history24h.isEmpty()
-    val scrubbedPoint = if (!isLiveNow && history24h.isNotEmpty()) {
-        val idx = ((history24h.size - 1) * scrubFraction).roundToInt().coerceIn(0, history24h.lastIndex)
-        history24h[idx]
+    val isLiveNow = scrubFraction >= 0.97f || historyWindow.isEmpty()
+    val scrubbedPoint = if (!isLiveNow && historyWindow.isNotEmpty()) {
+        val idx = ((historyWindow.size - 1) * scrubFraction).roundToInt().coerceIn(0, historyWindow.lastIndex)
+        historyWindow[idx]
     } else null
 
     val displayedRoom = if (scrubbedPoint != null) {
@@ -375,11 +386,23 @@ private fun WatchRoomDetailScreen(
     val tempColor = watchTemperatureColor(displayedRoom.temperatureC)
     val humColor = watchHumidityColor(displayedRoom.humidityPct)
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.UK) }
+    val dayTimeFmt = remember { SimpleDateFormat("EEE HH:mm", Locale.UK) }
     val timeBadgeText = if (scrubbedPoint != null) {
-        val hoursAgo = ((System.currentTimeMillis() - scrubbedPoint.timestampMs) / 3600_000f)
-        String.format(Locale.UK, "-%.1fh (%s)", hoursAgo, timeFmt.format(Date(scrubbedPoint.timestampMs)))
+        val hoursAgo = ((System.currentTimeMillis() - scrubbedPoint.timestampMs) / 3600_000f).coerceAtLeast(0.1f)
+        val hoursStr = if (hoursAgo < 10f) {
+            String.format(Locale.UK, "-%.1fh", hoursAgo)
+        } else {
+            String.format(Locale.UK, "-%dh", hoursAgo.roundToInt())
+        }
+        val clockStr = if (isWeekRange && hoursAgo >= 24f) {
+            dayTimeFmt.format(Date(scrubbedPoint.timestampMs))
+        } else {
+            timeFmt.format(Date(scrubbedPoint.timestampMs))
+        }
+        "$clockStr ($hoursStr)"
     } else {
-        "Live now • Comfort ${displayedRoom.comfortScore}"
+        val rangeLabel = if (isWeekRange) "1w scrub" else "24h scrub"
+        "Live now • $rangeLabel"
     }
 
     Box(
@@ -408,12 +431,12 @@ private fun WatchRoomDetailScreen(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 18.dp, start = 26.dp, end = 26.dp),
+                .padding(top = 18.dp, start = 22.dp, end = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (!isAmbient) {
                     Text(
@@ -436,6 +459,27 @@ private fun WatchRoomDetailScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (!isAmbient) {
+                    Text(
+                        text = if (isWeekRange) "1w ▾" else "24h ▾",
+                        color = if (isWeekRange) WatchThermalAmber else WatchCoolCyan,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xCC0F1E32))
+                            .border(
+                                1.dp,
+                                if (isWeekRange) WatchThermalAmber.copy(alpha = 0.65f) else WatchCoolCyan.copy(alpha = 0.65f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onToggleHistoryRange()
+                            }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
 
             Text(
@@ -449,11 +493,12 @@ private fun WatchRoomDetailScreen(
                 text = timeBadgeText,
                 color = if (isLiveNow) WatchCoolCyan else WatchThermalAmber,
                 fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
             )
         }
 
-        // Bottom HUD above the lower humidity bezel arc: 24h mini sparkline
+        // Bottom HUD above the lower humidity bezel arc: 24h / 1w mini sparkline
         if (!isAmbient) {
             Column(
                 modifier = Modifier
@@ -461,9 +506,9 @@ private fun WatchRoomDetailScreen(
                     .padding(bottom = 20.dp, start = 28.dp, end = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (history24h.size >= 2) {
+                if (historyWindow.size >= 2) {
                     WatchMini24hSparkline(
-                        points = history24h,
+                        points = historyWindow,
                         scrubFraction = scrubFraction,
                         tempColor = tempColor,
                         humColor = humColor,
@@ -558,11 +603,12 @@ private fun WatchSyncAndOtaPage(
     onCheckWatchOta: () -> Unit,
     onBackToFirstRoom: () -> Unit
 ) {
+    val hasUpdateAvailable = otaLabel.startsWith("Update available", ignoreCase = true)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(WatchOledBlack)
-            .padding(22.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -572,7 +618,7 @@ private fun WatchSyncAndOtaPage(
             Text(
                 text = "Pixel Watch sync",
                 color = WatchCoolCyan,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(2.dp))
@@ -581,55 +627,63 @@ private fun WatchSyncAndOtaPage(
                 color = Color(0xFFCBD5E1),
                 fontSize = 10.sp,
                 textAlign = TextAlign.Center,
-                maxLines = 2
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = "GW1200 (${snapshot.rooms.size} rooms) • v${BuildConfig.VERSION_NAME}",
                 color = Color(0xFF94A3B8),
-                fontSize = 9.sp
+                fontSize = 9.sp,
+                maxLines = 1
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.84f)
+                    .fillMaxWidth(0.86f)
+                    .height(28.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(WatchComfortEmerald)
-                    .clickable { onSyncNow() }
-                    .padding(vertical = 6.dp),
+                    .clickable { onSyncNow() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "Sync telemetry now",
                     color = Color(0xFF041A2E),
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.84f)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF172B44))
-                    .border(1.dp, WatchCoolCyan.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
-                    .clickable(enabled = !isCheckingOta) { onCheckWatchOta() }
-                    .padding(vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = otaLabel,
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(5.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.86f)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (hasUpdateAvailable) Color(0xFF1E3A5F) else Color(0xFF172B44))
+                    .border(
+                        1.dp,
+                        if (hasUpdateAvailable) WatchThermalAmber else WatchCoolCyan.copy(alpha = 0.7f),
+                        RoundedCornerShape(14.dp)
+                    )
+                    .clickable(enabled = !isCheckingOta) { onCheckWatchOta() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = otaLabel.ifBlank { "No updates (v${BuildConfig.VERSION_NAME})" },
+                    color = if (hasUpdateAvailable) WatchThermalAmber else Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(5.dp))
 
             Text(
                 text = "‹ Back to rooms",
