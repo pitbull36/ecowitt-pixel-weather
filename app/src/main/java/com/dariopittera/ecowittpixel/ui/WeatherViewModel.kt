@@ -6,8 +6,10 @@ import androidx.core.content.FileProvider
 import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.dariopittera.ecowittpixel.BuildConfig
 import com.dariopittera.ecowittpixel.data.EcowittApiClient
 import com.dariopittera.ecowittpixel.data.LocalHistoryStore
+import com.dariopittera.ecowittpixel.data.OtaUpdater
 import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.RoomConfig
@@ -26,6 +28,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     private val historyStore = LocalHistoryStore(application)
     private val apiClient = EcowittApiClient(historyStore)
+    private val otaUpdater = OtaUpdater(application)
 
     private val _settings = MutableStateFlow(historyStore.loadSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -50,6 +53,12 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
+    private val _otaButtonLabel = MutableStateFlow("Check updates")
+    val otaButtonLabel: StateFlow<String> = _otaButtonLabel.asStateFlow()
+
+    private val _isCheckingOta = MutableStateFlow(false)
+    val isCheckingOta: StateFlow<Boolean> = _isCheckingOta.asStateFlow()
+
     private var pollingJob: Job? = null
 
     init {
@@ -66,6 +75,9 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 if (!_settings.value.demoModeEnabled) {
                     val updated = apiClient.fetchAtmosphere(_settings.value, _simParams.value)
                     _snapshot.value = updated
+                    if (_settings.value.notificationsEnabled) {
+                        WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
+                    }
                     runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
                 }
             }
@@ -76,6 +88,9 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val updated = apiClient.fetchAtmosphere(_settings.value, _simParams.value)
             _snapshot.value = updated
+            if (_settings.value.notificationsEnabled) {
+                WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
+            }
             runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
         }
     }
@@ -108,8 +123,27 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             val updated = apiClient.generateSimulatedSnapshot(_settings.value, newSim)
             _snapshot.value = updated
             historyStore.saveWidgetSnapshotCache(updated)
+            if (_settings.value.notificationsEnabled) {
+                WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
+            }
             viewModelScope.launch {
                 runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+            }
+        }
+    }
+
+    fun testActiveNotificationsNow() {
+        viewModelScope.launch {
+            val results = WeatherSyncWorker.evaluateAndNotify(
+                context = getApplication(),
+                snapshot = _snapshot.value,
+                settings = _settings.value,
+                forceTest = true
+            )
+            _statusBanner.value = if (results.isNotEmpty()) {
+                "Dispatched ${results.size} notification(s): ${results.first()}"
+            } else {
+                "Notification test dispatched to your Pixel status bar"
             }
         }
     }
@@ -131,14 +165,14 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 _statusBanner.value = "Found GW1200 gateway at $discoveredIp and switched to live LAN mode"
             } else {
                 _statusBanner.value =
-                    "No GW1200 detected on local subnet; check WiFi connection or enter IP manually"
+                    "No GW1200 detected on local subnet; check WiFi connection or use Ecowitt cloud keys below"
             }
         }
     }
 
     fun testLiveConnection() {
         viewModelScope.launch {
-            _statusBanner.value = "Testing GW1200 connection..."
+            _statusBanner.value = "Connecting to GW1200..."
             val liveTestSettings = _settings.value.copy(demoModeEnabled = false)
             val result = apiClient.fetchAtmosphere(liveTestSettings, _simParams.value)
             _snapshot.value = result
@@ -147,8 +181,56 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun clearStatusBanner() {
-        _statusBanner.value = null
+    /**
+     * Checks GitHub Releases for a newer versionCode; if available, downloads the APK
+     * and launches Android's package installer automatically.
+     */
+    fun checkAndInstallOtaUpdate() {
+        if (_isCheckingOta.value) return
+        viewModelScope.launch {
+            _isCheckingOta.value = true
+            _otaButtonLabel.value = "Checking..."
+            val result = otaUpdater.checkForUpdate(BuildConfig.GITHUB_REPO)
+            result.fold(
+                onSuccess = { release ->
+                    if (release != null && release.versionCode > BuildConfig.VERSION_CODE) {
+                        if (!otaUpdater.canRequestPackageInstalls()) {
+                            _isCheckingOta.value = false
+                            _otaButtonLabel.value = "Check updates"
+                            _statusBanner.value =
+                                "Please allow 'Install unknown apps' for Ecowitt atmosphere, then tap Check updates again"
+                            otaUpdater.openUnknownAppsSettings()
+                            return@fold
+                        }
+                        _statusBanner.value = "Downloading update ${release.tagName}..."
+                        val dlResult = otaUpdater.downloadApk(release.apkDownloadUrl) { pct ->
+                            _otaButtonLabel.value = "Downloading ${(pct * 100).toInt()}%"
+                        }
+                        _isCheckingOta.value = false
+                        _otaButtonLabel.value = "Check updates"
+                        dlResult.fold(
+                            onSuccess = { apkFile ->
+                                _statusBanner.value = "Launching installer for ${release.tagName}..."
+                                otaUpdater.promptInstall(apkFile)
+                            },
+                            onFailure = { err ->
+                                _statusBanner.value = "Update download failed: ${err.message}"
+                            }
+                        )
+                    } else {
+                        _isCheckingOta.value = false
+                        _otaButtonLabel.value = "Check updates"
+                        _statusBanner.value =
+                            "App is up to date (v${BuildConfig.VERSION_NAME}, code ${BuildConfig.VERSION_CODE})"
+                    }
+                },
+                onFailure = { err ->
+                    _isCheckingOta.value = false
+                    _otaButtonLabel.value = "Check updates"
+                    _statusBanner.value = "Could not check updates: ${err.message}"
+                }
+            )
+        }
     }
 
     fun shareCsvExport() {

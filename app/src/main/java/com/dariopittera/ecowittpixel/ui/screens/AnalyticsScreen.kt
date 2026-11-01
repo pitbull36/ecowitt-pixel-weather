@@ -80,7 +80,7 @@ fun AnalyticsScreen(
                     color = Color.White
                 )
                 Text(
-                    text = "Multi-room comparison, comfort matrix, and 7-day trends",
+                    text = "Permanent on-device SQLite archive + Ecowitt cloud backfill",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFB0BEC5)
                 )
@@ -134,7 +134,7 @@ fun AnalyticsScreen(
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    listOf(24 to "24h", 168 to "7d").forEach { (hrs, label) ->
+                    listOf(24 to "24h", 168 to "7d", 720 to "30d", 87600 to "All").forEach { (hrs, label) ->
                         FilterChip(
                             selected = windowHours == hrs,
                             onClick = { windowHours = hrs },

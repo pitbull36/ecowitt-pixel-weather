@@ -2,7 +2,6 @@ package com.dariopittera.ecowittpixel.model
 
 import kotlin.math.exp
 import kotlin.math.ln
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 enum class RoomArchetype(
@@ -13,17 +12,27 @@ enum class RoomArchetype(
     val idealTempMinC: Float,
     val idealTempMaxC: Float,
     val idealHumidityMin: Float,
-    val idealHumidityMax: Float
+    val idealHumidityMax: Float,
+    val scientificAlertTempMinC: Float,
+    val scientificAlertTempMaxC: Float,
+    val scientificAlertHumidityMaxPct: Float,
+    val standardCitation: String,
+    val standardRationale: String
 ) {
     LIVING_ROOM(
         id = "living_room",
         title = "Living room",
-        subtitle = "Lounge with sofa, lamp, plant, and window",
+        subtitle = "Lounge with sofa, widescreen TV, and library bookcase",
         isOutdoor = false,
-        idealTempMinC = 19.5f,
+        idealTempMinC = 20.0f,
         idealTempMaxC = 23.5f,
         idealHumidityMin = 40f,
-        idealHumidityMax = 58f
+        idealHumidityMax = 60f,
+        scientificAlertTempMinC = 18.0f,
+        scientificAlertTempMaxC = 26.0f,
+        scientificAlertHumidityMaxPct = 60.0f,
+        standardCitation = "ASHRAE 55, CIBSE Guide A, and WHO",
+        standardRationale = "WHO minimum 18°C for living areas; CIBSE overheating limit at 26°C; EPA and ASHRAE dust mite and spore limit at 60% RH"
     ),
     BEDROOM(
         id = "bedroom",
@@ -31,9 +40,14 @@ enum class RoomArchetype(
         subtitle = "Sleep sanctuary optimised for cooler night air",
         isOutdoor = false,
         idealTempMinC = 16.5f,
-        idealTempMaxC = 20.5f,
+        idealTempMaxC = 19.5f,
         idealHumidityMin = 40f,
-        idealHumidityMax = 55f
+        idealHumidityMax = 55f,
+        scientificAlertTempMinC = 15.5f,
+        scientificAlertTempMaxC = 24.0f,
+        scientificAlertHumidityMaxPct = 58.0f,
+        standardCitation = "CIBSE Sleep Standard and WHO",
+        standardRationale = "Core body cooling for REM sleep requires 16.5–19.5°C; CIBSE sleep quality degrades above 24°C; bedding dust mite limit at 58% RH"
     ),
     STUDY(
         id = "study",
@@ -42,28 +56,43 @@ enum class RoomArchetype(
         isOutdoor = false,
         idealTempMinC = 20.0f,
         idealTempMaxC = 23.5f,
-        idealHumidityMin = 38f,
-        idealHumidityMax = 55f
+        idealHumidityMin = 40f,
+        idealHumidityMax = 55f,
+        scientificAlertTempMinC = 18.5f,
+        scientificAlertTempMaxC = 25.5f,
+        scientificAlertHumidityMaxPct = 60.0f,
+        standardCitation = "EN 16798-1 Category I Office",
+        standardRationale = "Cognitive performance and tear-film stability peak at 20–23.5°C and 40–55% RH; productivity declines above 25.5°C"
     ),
     KITCHEN(
         id = "kitchen",
         title = "Kitchen and dining",
         subtitle = "Island counter with higher heat and steam variance",
         isOutdoor = false,
-        idealTempMinC = 18.5f,
-        idealTempMaxC = 24.0f,
+        idealTempMinC = 18.0f,
+        idealTempMaxC = 23.5f,
         idealHumidityMin = 38f,
-        idealHumidityMax = 62f
+        idealHumidityMax = 65f,
+        scientificAlertTempMinC = 16.5f,
+        scientificAlertTempMaxC = 27.0f,
+        scientificAlertHumidityMaxPct = 68.0f,
+        standardCitation = "CIBSE Guide A Kitchen Standard",
+        standardRationale = "Active metabolic rate allows 18–23.5°C; sustained humidity above 68% RH requires extractor ventilation"
     ),
     BATHROOM(
         id = "bathroom",
         title = "Bathroom",
         subtitle = "Tiled suite with mirror condensation tracking",
         isOutdoor = false,
-        idealTempMinC = 20.5f,
-        idealTempMaxC = 25.0f,
+        idealTempMinC = 21.0f,
+        idealTempMaxC = 24.5f,
         idealHumidityMin = 40f,
-        idealHumidityMax = 65f
+        idealHumidityMax = 70f,
+        scientificAlertTempMinC = 19.5f,
+        scientificAlertTempMaxC = 27.5f,
+        scientificAlertHumidityMaxPct = 72.0f,
+        standardCitation = "ASHRAE 160 Mould Germination Model",
+        standardRationale = "Prevents surface water activity aw > 0.80 on tiles and mirrors; sustained RH above 72% triggers mould germination"
     ),
     BALCONY_GARDEN(
         id = "balcony_garden",
@@ -73,7 +102,12 @@ enum class RoomArchetype(
         idealTempMinC = 10.0f,
         idealTempMaxC = 26.0f,
         idealHumidityMin = 35f,
-        idealHumidityMax = 75f
+        idealHumidityMax = 75f,
+        scientificAlertTempMinC = 2.0f,
+        scientificAlertTempMaxC = 32.0f,
+        scientificAlertHumidityMaxPct = 88.0f,
+        standardCitation = "WMO and RHS Horticultural Standard",
+        standardRationale = "Ground frost alert below 2°C for container plants; heat stress above 32°C; foliar fungal risk above 88% RH"
     );
 
     companion object {
@@ -140,13 +174,50 @@ data class HistoricalPoint(
     val pressureHpa: Float? = null
 )
 
+enum class NotificationMetric(val id: String, val label: String, val unitSuffix: String) {
+    TEMPERATURE("temperature", "Temperature", "°C"),
+    HUMIDITY("humidity", "Humidity", "% RH"),
+    DEW_POINT("dew_point", "Dew point", "°C"),
+    PRESSURE("pressure", "Barometric pressure", "hPa"),
+    COMFORT_SCORE("comfort_score", "Comfort score", "/100");
+
+    companion object {
+        fun fromId(id: String): NotificationMetric =
+            entries.firstOrNull { it.id == id } ?: TEMPERATURE
+    }
+}
+
+enum class ComparisonOperator(val id: String, val symbol: String, val label: String) {
+    BELOW("below", "<", "Falls below"),
+    ABOVE("above", ">", "Rises above");
+
+    fun matches(actual: Float, threshold: Float): Boolean =
+        if (this == BELOW) actual <= threshold else actual >= threshold
+
+    companion object {
+        fun fromId(id: String): ComparisonOperator =
+            entries.firstOrNull { it.id == id } ?: ABOVE
+    }
+}
+
+data class CustomAlertCriterion(
+    val id: String,
+    val channelId: String,
+    val metric: NotificationMetric,
+    val operator: ComparisonOperator,
+    val threshold: Float,
+    val customMessage: String,
+    val enabled: Boolean = true
+)
+
 data class RoomConfig(
     val channelId: String,
     val customName: String,
     val archetype: RoomArchetype,
-    val alertTempMinC: Float = 15.0f,
-    val alertTempMaxC: Float = 27.5f,
-    val alertHumidityMaxPct: Float = 68.0f,
+    val alertTempMinC: Float = archetype.scientificAlertTempMinC,
+    val alertTempMaxC: Float = archetype.scientificAlertTempMaxC,
+    val alertHumidityMinPct: Float = 30.0f,
+    val alertHumidityMaxPct: Float = archetype.scientificAlertHumidityMaxPct,
     val alertsEnabled: Boolean = true
 )
 
@@ -240,43 +311,65 @@ data class AppSettings(
     val pollingIntervalMinutes: Int = 15,
     val notificationsEnabled: Boolean = true,
     val ventilationAdviceNotifications: Boolean = true,
+    val mouldRiskNotifications: Boolean = true,
+    val pressureDropNotifications: Boolean = true,
+    val lowBatteryNotifications: Boolean = true,
     val gyroscopeParallaxEnabled: Boolean = true,
-    val roomConfigs: Map<String, RoomConfig> = defaultRoomConfigs()
+    val roomConfigs: Map<String, RoomConfig> = defaultRoomConfigs(),
+    val customCriteria: List<CustomAlertCriterion> = defaultCustomCriteria()
 ) {
     companion object {
         fun defaultRoomConfigs(): Map<String, RoomConfig> = mapOf(
             "gateway" to RoomConfig(
                 channelId = "gateway",
                 customName = "Living room (GW1200)",
-                archetype = RoomArchetype.LIVING_ROOM,
-                alertTempMinC = 18.0f,
-                alertTempMaxC = 26.5f,
-                alertHumidityMaxPct = 65.0f
+                archetype = RoomArchetype.LIVING_ROOM
             ),
             "ch1" to RoomConfig(
                 channelId = "ch1",
                 customName = "Master bedroom (Ch 1)",
-                archetype = RoomArchetype.BEDROOM,
-                alertTempMinC = 16.0f,
-                alertTempMaxC = 24.5f,
-                alertHumidityMaxPct = 62.0f
+                archetype = RoomArchetype.BEDROOM
             ),
             "ch2" to RoomConfig(
                 channelId = "ch2",
                 customName = "Balcony garden (Ch 2)",
-                archetype = RoomArchetype.BALCONY_GARDEN,
-                alertTempMinC = 2.0f,
-                alertTempMaxC = 34.0f,
-                alertHumidityMaxPct = 88.0f
+                archetype = RoomArchetype.BALCONY_GARDEN
+            )
+        )
+
+        fun defaultCustomCriteria(): List<CustomAlertCriterion> = listOf(
+            CustomAlertCriterion(
+                id = "crit_cold_living",
+                channelId = "gateway",
+                metric = NotificationMetric.TEMPERATURE,
+                operator = ComparisonOperator.BELOW,
+                threshold = 19.0f,
+                customMessage = "Living room below 19°C: check heating or close draughty windows",
+                enabled = true
+            ),
+            CustomAlertCriterion(
+                id = "crit_humid_bedroom",
+                channelId = "ch1",
+                metric = NotificationMetric.HUMIDITY,
+                operator = ComparisonOperator.ABOVE,
+                threshold = 60.0f,
+                customMessage = "Bedroom humidity above 60%: ventilate or run dehumidifier before sleep",
+                enabled = true
+            ),
+            CustomAlertCriterion(
+                id = "crit_frost_balcony",
+                channelId = "ch2",
+                metric = NotificationMetric.TEMPERATURE,
+                operator = ComparisonOperator.BELOW,
+                threshold = 3.0f,
+                customMessage = "Outdoor frost warning: protect balcony plants",
+                enabled = true
             )
         )
     }
 }
 
 object Psychrometrics {
-    /**
-     * Magnus-Tetens formula for dew point in degrees Celsius.
-     */
     fun computeDewPointC(tempC: Float, humidityPct: Float): Float {
         val rh = humidityPct.coerceIn(1f, 100f) / 100f
         val a = 17.625f
@@ -285,27 +378,18 @@ object Psychrometrics {
         return (b * alpha) / (a - alpha)
     }
 
-    /**
-     * Absolute humidity in grams of water vapour per cubic metre of air (g/m³).
-     */
     fun computeAbsoluteHumidityGm3(tempC: Float, humidityPct: Float): Float {
         val rh = humidityPct.coerceIn(1f, 100f)
         val saturationVapourPressureHpa = 6.112f * exp((17.67f * tempC) / (tempC + 243.5f))
         return (saturationVapourPressureHpa * rh * 2.1674f) / (273.15f + tempC)
     }
 
-    /**
-     * Vapour pressure deficit (VPD) in kPa, useful for plant health and air drying power.
-     */
     fun computeVpdKpa(tempC: Float, humidityPct: Float): Float {
         val rh = humidityPct.coerceIn(1f, 100f) / 100f
         val svpKpa = 0.61078f * exp((17.27f * tempC) / (tempC + 237.3f))
         return (svpKpa * (1f - rh)).coerceAtLeast(0f)
     }
 
-    /**
-     * Feels-like temperature combining Steadman apparent temperature and humidex adjustment.
-     */
     fun computeFeelsLikeC(tempC: Float, humidityPct: Float): Float {
         val rh = humidityPct.coerceIn(1f, 100f)
         val vapourPressureHpa = (rh / 100f) * 6.105f * exp((17.27f * tempC) / (237.7f + tempC))
@@ -314,7 +398,7 @@ object Psychrometrics {
 
     fun evaluateComfort(tempC: Float, humidityPct: Float, archetype: RoomArchetype): ComfortStatus {
         return when {
-            humidityPct > archetype.idealHumidityMax + 7f -> ComfortStatus.HUMID
+            humidityPct > archetype.idealHumidityMax + 5f -> ComfortStatus.HUMID
             humidityPct < archetype.idealHumidityMin - 8f -> ComfortStatus.DRY
             tempC > archetype.idealTempMaxC + 1.2f -> ComfortStatus.WARM
             tempC < archetype.idealTempMinC - 1.2f -> ComfortStatus.COOL
@@ -325,8 +409,8 @@ object Psychrometrics {
     fun evaluateMouldRisk(tempC: Float, humidityPct: Float, dewPointC: Float): MouldRiskLevel {
         val dewDepression = tempC - dewPointC
         return when {
-            humidityPct >= 72f || dewDepression < 3.2f -> MouldRiskLevel.HIGH
-            humidityPct >= 62f || dewDepression < 5.2f -> MouldRiskLevel.MODERATE
+            humidityPct >= 70f || dewDepression < 3.2f -> MouldRiskLevel.HIGH
+            humidityPct >= 60f || dewDepression < 5.2f -> MouldRiskLevel.MODERATE
             else -> MouldRiskLevel.LOW
         }
     }
@@ -339,10 +423,6 @@ object Psychrometrics {
         return (100f - tempPenalty - humPenalty).roundToInt().coerceIn(15, 100)
     }
 
-    /**
-     * Compares an indoor room with an outdoor sensor using absolute humidity (g/m³)
-     * and temperature to produce actionable window ventilation advice.
-     */
     fun buildVentilationAdvice(
         indoor: SensorRoomState,
         outdoor: SensorRoomState?,
@@ -352,7 +432,7 @@ object Psychrometrics {
             return "Outdoor reference sensor: ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³ absolute moisture"
         }
         if (outdoor == null || outdoor.channelId == indoor.channelId) {
-            return if (indoor.humidityPct > 60f) {
+            return if (indoor.humidityPct > indoor.archetype.scientificAlertHumidityMaxPct) {
                 "Indoor air holds ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³ moisture; ventilate if outdoor air is drier"
             } else {
                 "Indoor moisture is balanced at ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³"
@@ -362,10 +442,10 @@ object Psychrometrics {
         val tempDiff = indoor.temperatureC - outdoor.temperatureC
 
         return when {
-            indoor.humidityPct >= 58f && absDiff >= 1.2f ->
+            indoor.humidityPct >= indoor.archetype.idealHumidityMax && absDiff >= 1.0f ->
                 "Open window: outdoor air carries ${String.format("%.1f", absDiff)} g/m³ less water vapour and will dry this room"
             indoor.temperatureC > indoor.archetype.idealTempMaxC && tempDiff >= 1.5f && absDiff >= -0.8f ->
-                "Open window: outdoor air is ${tempUnit.format( outdoor.temperatureC )} and will naturally cool the room"
+                "Open window: outdoor air is ${tempUnit.format(outdoor.temperatureC)} and will naturally cool the room"
             absDiff < -1.5f && indoor.humidityPct >= 52f ->
                 "Keep windows closed: outdoor air has ${String.format("%.1f", -absDiff)} g/m³ more moisture than indoors"
             else ->

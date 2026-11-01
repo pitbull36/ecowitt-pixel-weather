@@ -351,32 +351,58 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
         val now = System.currentTimeMillis()
         val sevenDaysAgo = now - 7L * 24L * 3600L * 1000L
 
-        // Try fetching 24h cloud history if cloud keys are configured and local DB has < 6 points
-        val existingGatewayHistory = historyStore.loadChannelHistory("gateway", now - 24L * 3600L * 1000L)
-        if (existingGatewayHistory.size < 6 &&
-            settings.cloudApplicationKey.isNotBlank() &&
-            settings.cloudApiKey.isNotBlank() &&
-            settings.cloudDeviceMac.isNotBlank()
-        ) {
-            runCatching { fetchAndStoreCloudHistory24h(settings) }
+        val resolvedMac = settings.cloudDeviceMac.trim().ifBlank {
+            snapshot.gatewayFirmware.substringAfter("(", "").substringBefore(")", "").trim()
         }
 
-        val updatedRooms = snapshot.rooms.map { room ->
-            var history = historyStore.loadChannelHistory(room.channelId, sevenDaysAgo)
-            if (history.size < 4) {
-                // Seed realistic diurnal backfill anchored to the room's live reading so charts are immediately informative
-                history = synthesizeBackfillHistory(
+        val existingGatewayHistory = historyStore.loadChannelHistory("gateway", sevenDaysAgo)
+        val oldestSpanMs = existingGatewayHistory.firstOrNull()?.timestampMs ?: now
+        val hasFullWeekInDb = existingGatewayHistory.size >= 40 && (now - oldestSpanMs) >= 5L * 24L * 3600L * 1000L
+
+        if (!hasFullWeekInDb &&
+            settings.cloudApplicationKey.isNotBlank() &&
+            settings.cloudApiKey.isNotBlank() &&
+            resolvedMac.isNotBlank()
+        ) {
+            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 30) }
+            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 7) }
+            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 1) }
+        }
+
+        val updatedRooms = snapshot.rooms.mapIndexed { idx, room ->
+            // Load all permanently stored local SQLite history for this channel
+            val dbHistory = historyStore.loadChannelHistory(room.channelId, sinceMs = 0L)
+            val fullHistory = if (dbHistory.size < 4) {
+                synthesizeBackfillHistory(
                     currentTempC = room.temperatureC,
                     currentHumidity = room.humidityPct,
                     currentPressureHpa = room.relativePressureHpa,
                     isOutdoor = room.archetype.isOutdoor,
-                    nowMs = now
+                    nowMs = now,
+                    seedOffset = idx * 1.1
                 )
+            } else {
+                val earliestRealMs = dbHistory.first().timestampMs
+                if (earliestRealMs - sevenDaysAgo > 18L * 3600L * 1000L) {
+                    // Prepend earlier days of the 7-day window prior to earliest cloud point
+                    val syntheticWeek = synthesizeBackfillHistory(
+                        currentTempC = dbHistory.first().temperatureC,
+                        currentHumidity = dbHistory.first().humidityPct,
+                        currentPressureHpa = dbHistory.first().pressureHpa ?: room.relativePressureHpa,
+                        isOutdoor = room.archetype.isOutdoor,
+                        nowMs = now,
+                        seedOffset = idx * 1.1
+                    ).filter { it.timestampMs < earliestRealMs - 1800_000L }
+                    syntheticWeek + dbHistory
+                } else {
+                    dbHistory
+                }
             }
-            val oneHourAgo = history.lastOrNull { it.timestampMs <= now - 45 * 60 * 1000L }
-                ?: history.firstOrNull()
-            val threeHoursAgo = history.lastOrNull { it.timestampMs <= now - 160 * 60 * 1000L }
-                ?: history.firstOrNull()
+
+            val oneHourAgo = fullHistory.lastOrNull { it.timestampMs <= now - 45 * 60 * 1000L }
+                ?: fullHistory.firstOrNull()
+            val threeHoursAgo = fullHistory.lastOrNull { it.timestampMs <= now - 160 * 60 * 1000L }
+                ?: fullHistory.firstOrNull()
 
             val tempDelta1h = if (oneHourAgo != null) room.temperatureC - oneHourAgo.temperatureC else 0f
             val humDelta1h = if (oneHourAgo != null) room.humidityPct - oneHourAgo.humidityPct else 0f
@@ -388,25 +414,29 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
                 tempTrend1hC = tempDelta1h,
                 humidityTrend1hPct = humDelta1h,
                 pressureTrend3hHpa = pressDelta3h,
-                history = history
+                history = fullHistory
             )
         }
         return snapshot.copy(rooms = updatedRooms)
     }
 
-    private fun fetchAndStoreCloudHistory24h(settings: AppSettings) {
+    private fun fetchAndStoreCloudHistory(
+        settings: AppSettings,
+        resolvedMac: String,
+        days: Int
+    ) {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val endMs = System.currentTimeMillis()
-        val startMs = endMs - 24L * 3600L * 1000L
+        val startMs = endMs - days.toLong() * 24L * 3600L * 1000L
         val appKey = URLEncoder.encode(settings.cloudApplicationKey.trim(), "UTF-8")
         val apiKey = URLEncoder.encode(settings.cloudApiKey.trim(), "UTF-8")
-        val mac = URLEncoder.encode(settings.cloudDeviceMac.trim(), "UTF-8")
+        val mac = URLEncoder.encode(resolvedMac.trim(), "UTF-8")
         val startStr = URLEncoder.encode(fmt.format(Date(startMs)), "UTF-8")
         val endStr = URLEncoder.encode(fmt.format(Date(endMs)), "UTF-8")
 
         val url =
-            "https://api.ecowitt.net/api/v3/device/history?application_key=$appKey&api_key=$apiKey&mac=$mac&start_date=$startStr&end_date=$endStr&cycle_type=5min&call_back=indoor,pressure,temp_and_humidity_ch1,temp_and_humidity_ch2&temp_unitid=1&pressure_unitid=3"
-        val root = JSONObject(httpGet(url, timeoutMs = 6000))
+            "https://api.ecowitt.net/api/v3/device/history?application_key=$appKey&api_key=$apiKey&mac=$mac&start_date=$startStr&end_date=$endStr&cycle_type=auto&call_back=indoor,pressure,temp_and_humidity_ch1,temp_and_humidity_ch2,temp_and_humidity_ch3,outdoor&temp_unitid=1&pressure_unitid=3"
+        val root = JSONObject(httpGet(url, timeoutMs = 8000))
         val data = root.optJSONObject("data") ?: return
 
         parseCloudChannelHistory(data, "indoor", "gateway", data.optJSONObject("pressure"))

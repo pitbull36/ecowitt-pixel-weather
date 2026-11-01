@@ -522,13 +522,17 @@ fun DailyRangeBarsCard(
                     text = dayLabel,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFCFD8DC),
-                    modifier = Modifier.width(82.dp)
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(86.dp)
                 )
                 Text(
                     text = tempUnit.format(minT),
                     style = MaterialTheme.typography.bodySmall,
-                    color = CoolCyan,
-                    modifier = Modifier.width(46.dp)
+                    color = Color(0xFFF8FAFC),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(56.dp)
                 )
                 Box(
                     modifier = Modifier
@@ -560,14 +564,18 @@ fun DailyRangeBarsCard(
                     text = tempUnit.format(maxT),
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = ThermalCoral,
-                    modifier = Modifier.width(46.dp)
+                    color = temperatureAccentColor(maxT),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(56.dp)
                 )
                 Text(
                     text = "${minH.toInt()}–${maxH.toInt()}%",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF90CAF9),
-                    modifier = Modifier.width(52.dp)
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(62.dp)
                 )
             }
         }

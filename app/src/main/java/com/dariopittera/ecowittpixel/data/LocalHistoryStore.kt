@@ -5,9 +5,12 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.dariopittera.ecowittpixel.model.AppSettings
+import com.dariopittera.ecowittpixel.model.ComparisonOperator
 import com.dariopittera.ecowittpixel.model.ConnectionSource
+import com.dariopittera.ecowittpixel.model.CustomAlertCriterion
 import com.dariopittera.ecowittpixel.model.HistoricalPoint
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
+import com.dariopittera.ecowittpixel.model.NotificationMetric
 import com.dariopittera.ecowittpixel.model.PressureUnit
 import com.dariopittera.ecowittpixel.model.RoomArchetype
 import com.dariopittera.ecowittpixel.model.RoomConfig
@@ -55,6 +58,12 @@ class LocalHistoryStore(private val context: Context) :
         } else {
             AppSettings.defaultRoomConfigs()
         }
+        val customCriteriaJson = prefs.getString("custom_criteria_json", null)
+        val customCriteria = if (customCriteriaJson != null) {
+            parseCustomCriteria(customCriteriaJson)
+        } else {
+            AppSettings.defaultCustomCriteria()
+        }
         return AppSettings(
             gatewayIp = prefs.getString("gateway_ip", defaults.gatewayIp) ?: defaults.gatewayIp,
             cloudApplicationKey = prefs.getString("cloud_app_key", "") ?: "",
@@ -74,11 +83,24 @@ class LocalHistoryStore(private val context: Context) :
                 "ventilation_notifications",
                 defaults.ventilationAdviceNotifications
             ),
+            mouldRiskNotifications = prefs.getBoolean(
+                "mould_risk_notifications",
+                defaults.mouldRiskNotifications
+            ),
+            pressureDropNotifications = prefs.getBoolean(
+                "pressure_drop_notifications",
+                defaults.pressureDropNotifications
+            ),
+            lowBatteryNotifications = prefs.getBoolean(
+                "low_battery_notifications",
+                defaults.lowBatteryNotifications
+            ),
             gyroscopeParallaxEnabled = prefs.getBoolean(
                 "gyro_parallax",
                 defaults.gyroscopeParallaxEnabled
             ),
-            roomConfigs = roomConfigs
+            roomConfigs = roomConfigs,
+            customCriteria = customCriteria
         )
     }
 
@@ -91,10 +113,24 @@ class LocalHistoryStore(private val context: Context) :
                 put("archetype", cfg.archetype.id)
                 put("alertTempMinC", cfg.alertTempMinC.toDouble())
                 put("alertTempMaxC", cfg.alertTempMaxC.toDouble())
+                put("alertHumidityMinPct", cfg.alertHumidityMinPct.toDouble())
                 put("alertHumidityMaxPct", cfg.alertHumidityMaxPct.toDouble())
                 put("alertsEnabled", cfg.alertsEnabled)
             }
             roomsObj.put(channelId, obj)
+        }
+        val criteriaArr = JSONArray()
+        settings.customCriteria.forEach { crit ->
+            val cObj = JSONObject().apply {
+                put("id", crit.id)
+                put("channelId", crit.channelId)
+                put("metric", crit.metric.id)
+                put("operator", crit.operator.id)
+                put("threshold", crit.threshold.toDouble())
+                put("customMessage", crit.customMessage)
+                put("enabled", crit.enabled)
+            }
+            criteriaArr.put(cObj)
         }
         prefs.edit()
             .putString("gateway_ip", settings.gatewayIp.trim())
@@ -108,8 +144,12 @@ class LocalHistoryStore(private val context: Context) :
             .putInt("polling_interval_min", settings.pollingIntervalMinutes)
             .putBoolean("notifications_enabled", settings.notificationsEnabled)
             .putBoolean("ventilation_notifications", settings.ventilationAdviceNotifications)
+            .putBoolean("mould_risk_notifications", settings.mouldRiskNotifications)
+            .putBoolean("pressure_drop_notifications", settings.pressureDropNotifications)
+            .putBoolean("low_battery_notifications", settings.lowBatteryNotifications)
             .putBoolean("gyro_parallax", settings.gyroscopeParallaxEnabled)
             .putString("room_configs_json", roomsObj.toString())
+            .putString("custom_criteria_json", criteriaArr.toString())
             .apply()
     }
 
@@ -121,19 +161,45 @@ class LocalHistoryStore(private val context: Context) :
             while (keys.hasNext()) {
                 val key = keys.next()
                 val obj = root.getJSONObject(key)
+                val arch = RoomArchetype.fromId(obj.optString("archetype", "living_room"))
                 result[key] = RoomConfig(
                     channelId = obj.optString("channelId", key),
                     customName = obj.optString("customName", key),
-                    archetype = RoomArchetype.fromId(obj.optString("archetype", "living_room")),
-                    alertTempMinC = obj.optDouble("alertTempMinC", 16.0).toFloat(),
-                    alertTempMaxC = obj.optDouble("alertTempMaxC", 27.0).toFloat(),
-                    alertHumidityMaxPct = obj.optDouble("alertHumidityMaxPct", 65.0).toFloat(),
+                    archetype = arch,
+                    alertTempMinC = obj.optDouble("alertTempMinC", arch.scientificAlertTempMinC.toDouble()).toFloat(),
+                    alertTempMaxC = obj.optDouble("alertTempMaxC", arch.scientificAlertTempMaxC.toDouble()).toFloat(),
+                    alertHumidityMinPct = obj.optDouble("alertHumidityMinPct", 30.0).toFloat(),
+                    alertHumidityMaxPct = obj.optDouble("alertHumidityMaxPct", arch.scientificAlertHumidityMaxPct.toDouble()).toFloat(),
                     alertsEnabled = obj.optBoolean("alertsEnabled", true)
                 )
             }
             result
         } catch (_: Exception) {
             result
+        }
+    }
+
+    private fun parseCustomCriteria(json: String): List<CustomAlertCriterion> {
+        return try {
+            val arr = JSONArray(json)
+            val list = ArrayList<CustomAlertCriterion>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    CustomAlertCriterion(
+                        id = obj.optString("id", "crit_$i"),
+                        channelId = obj.optString("channelId", "gateway"),
+                        metric = NotificationMetric.fromId(obj.optString("metric", "temperature")),
+                        operator = ComparisonOperator.fromId(obj.optString("operator", "above")),
+                        threshold = obj.optDouble("threshold", 25.0).toFloat(),
+                        customMessage = obj.optString("customMessage", "Custom alert criterion met"),
+                        enabled = obj.optBoolean("enabled", true)
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            AppSettings.defaultCustomCriteria()
         }
     }
 
@@ -159,9 +225,7 @@ class LocalHistoryStore(private val context: Context) :
                     SQLiteDatabase.CONFLICT_REPLACE
                 )
             }
-            // Keep up to 35 days of history
-            val cutoff = System.currentTimeMillis() - 35L * 24L * 3600L * 1000L
-            db.delete("sensor_history", "timestamp_ms < ?", arrayOf(cutoff.toString()))
+            // Permanent local SQLite archive: no expiration cutoff so history is retained forever on device
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -314,7 +378,8 @@ class LocalHistoryStore(private val context: Context) :
         file.bufferedWriter().use { out ->
             out.write("channel_id,room_name,timestamp_iso,temperature_c,humidity_pct,dew_point_c,pressure_hpa\n")
             snapshot.rooms.forEach { room ->
-                room.history.forEach { pt ->
+                val allPoints = loadChannelHistory(room.channelId, sinceMs = 0L).ifEmpty { room.history }
+                allPoints.forEach { pt ->
                     val dp = com.dariopittera.ecowittpixel.model.Psychrometrics.computeDewPointC(
                         pt.temperatureC,
                         pt.humidityPct

@@ -54,6 +54,8 @@ class MainActivity : ComponentActivity() {
                 val wholeHomeOverview by viewModel.wholeHomeOverview.collectAsState()
                 val isScanningSubnet by viewModel.isScanningSubnet.collectAsState()
                 val statusBanner by viewModel.statusBanner.collectAsState()
+                val otaButtonLabel by viewModel.otaButtonLabel.collectAsState()
+                val isCheckingOta by viewModel.isCheckingOta.collectAsState()
 
                 var activeTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -157,6 +159,10 @@ class MainActivity : ComponentActivity() {
                             snapshot = snapshot,
                             isScanningSubnet = isScanningSubnet,
                             statusBanner = statusBanner,
+                            otaButtonLabel = otaButtonLabel,
+                            isCheckingOta = isCheckingOta,
+                            onCheckOtaUpdate = viewModel::checkAndInstallOtaUpdate,
+                            onTestNotifications = viewModel::testActiveNotificationsNow,
                             onUpdateSettings = viewModel::updateSettings,
                             onUpdateRoomConfig = viewModel::updateRoomConfig,
                             onScanSubnet = viewModel::discoverGatewayOnLan,

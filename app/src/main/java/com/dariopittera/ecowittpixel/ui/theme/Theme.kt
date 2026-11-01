@@ -11,8 +11,9 @@ import androidx.compose.ui.platform.LocalContext
 val PixelSkyNavy = Color(0xFF0B1320)
 val PixelSurfaceCard = Color(0xFF131F33)
 val PixelSurfaceElevated = Color(0xFF1B2B44)
-val ThermalCoral = Color(0xFFFF8A65)
-val ThermalAmber = Color(0xFFFFCA28)
+val ThermalCoral = Color(0xFFEF5350)
+val ThermalAmber = Color(0xFFFFD54F)
+val ThermalOrange = Color(0xFFFF9800)
 val ComfortEmerald = Color(0xFF26A69A)
 val CoolCyan = Color(0xFF4DD0E1)
 val FrostBlue = Color(0xFF64B5F6)
@@ -36,22 +37,35 @@ private val AtmosphericColorScheme = darkColorScheme(
     onSurfaceVariant = Color(0xFFBAC6DC)
 )
 
+/**
+ * Thermometer colour scale:
+ * - below 19°C: White
+ * - 19°C to <23°C: Yellow
+ * - 23°C to <26°C: Orange
+ * - 26°C and above: Red
+ */
 fun temperatureAccentColor(tempC: Float): Color {
     return when {
-        tempC <= 8f -> FrostBlue
-        tempC <= 17.5f -> CoolCyan
-        tempC <= 23.2f -> ComfortEmerald
-        tempC <= 26.5f -> ThermalAmber
-        else -> ThermalCoral
+        tempC >= 26.0f -> Color(0xFFEF5350) // Red
+        tempC >= 23.0f -> Color(0xFFFF9800) // Orange
+        tempC >= 19.0f -> Color(0xFFFFD54F) // Yellow
+        else -> Color(0xFFF8FAFC)           // White
     }
 }
 
+/**
+ * Scientific indoor humidity bands (ASHRAE 55 / CIBSE / EPA / ASHRAE 160):
+ * - below 35%: Dry air (Amber)
+ * - 35% to 59%: Optimal comfort range (Calm Emerald-Aqua)
+ * - 60% to 64%: Slightly elevated moisture (Warning Cyan-Blue)
+ * - 65% and above: High humidity / mould risk threshold (Damp Electric Blue-Violet)
+ */
 fun humidityAccentColor(humidityPct: Float): Color {
     return when {
         humidityPct < 35f -> ThermalAmber
-        humidityPct <= 58f -> ComfortEmerald
-        humidityPct <= 68f -> CoolCyan
-        else -> HumidViolet
+        humidityPct < 60f -> ComfortEmerald
+        humidityPct < 65f -> Color(0xFF29B6F6)
+        else -> Color(0xFF6366F1)
     }
 }
 

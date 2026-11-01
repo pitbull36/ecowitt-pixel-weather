@@ -177,7 +177,7 @@ fun DioramaHomeScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // 2. Horizontal Sensor Room Selector Strip
         Row(
@@ -202,7 +202,7 @@ fun DioramaHomeScreen(
                         .clickable { onSelectRoomIndex(idx) }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
@@ -230,9 +230,10 @@ fun DioramaHomeScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // 3. Interactive 3D Isometric Room Diorama Card
+        // 3. Interactive 3D Isometric Room Diorama Card (Full height in 3D stack mode, zero clutter overlays!)
+        val canvasHeight = if (wholeHomeOverview) 530.dp else 340.dp
         Card(
             shape = RoundedCornerShape(26.dp),
             colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),
@@ -242,7 +243,7 @@ fun DioramaHomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(330.dp)
+                        .height(canvasHeight)
                 ) {
                     RoomDioramaCanvas(
                         room = activeRoom,
@@ -254,53 +255,6 @@ fun DioramaHomeScreen(
                         onSelectRoomIndex = onSelectRoomIndex,
                         modifier = Modifier.fillMaxSize()
                     )
-
-                    // Top-left overlay: room title & comfort score pill
-                    Surface(
-                        color = Color(0xBF0B1526),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            Text(
-                                text = if (wholeHomeOverview) {
-                                    "Whole-home 3D cutaway (${rooms.size} zones)"
-                                } else {
-                                    activeRoom.roomName
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "${activeRoom.comfortStatus.label} • comfort ${activeRoom.comfortScore}/100",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = temperatureAccentColor(activeRoom.temperatureC)
-                            )
-                        }
-                    }
-
-                    // Bottom-left hint: tilt phone or drag to orbit
-                    Surface(
-                        color = Color(0x990B1526),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = if (wholeHomeOverview) {
-                                "Tap any floor to focus • drag or tilt Pixel to orbit"
-                            } else {
-                                "Tilt phone or drag to orbit 3D room • double-tap to reset"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFCFD8DC),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
                 }
 
                 // Room Preset Archetype Switcher Bar below the 3D scene
@@ -309,7 +263,7 @@ fun DioramaHomeScreen(
                         .fillMaxWidth()
                         .background(Color(0xFF0E192B))
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -330,7 +284,12 @@ fun DioramaHomeScreen(
                                 )
                                 onUpdateRoomConfig(
                                     activeRoom.channelId,
-                                    existing.copy(archetype = arch)
+                                    existing.copy(
+                                        archetype = arch,
+                                        alertTempMinC = arch.scientificAlertTempMinC,
+                                        alertTempMaxC = arch.scientificAlertTempMaxC,
+                                        alertHumidityMaxPct = arch.scientificAlertHumidityMaxPct
+                                    )
                                 )
                             },
                             label = { Text(arch.title, fontSize = 11.sp) },
@@ -344,7 +303,7 @@ fun DioramaHomeScreen(
             }
         }
 
-        // 4. Collapsible Live Simulation Sliders (when in Demo/Simulation Mode)
+        // 4. Collapsible Live Simulation Sliders
         AnimatedVisibility(visible = settings.demoModeEnabled && showSimSliders) {
             SimulationControlCard(
                 simParams = simParams,
@@ -354,26 +313,26 @@ fun DioramaHomeScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // 5. Smart Window Ventilation & Outdoor Comparison Banner
+        // 5. Smart Window Ventilation Banner
         val ventilationText = Psychrometrics.buildVentilationAdvice(
             indoor = activeRoom,
             outdoor = outdoorReference,
             tempUnit = settings.tempUnit
         )
         Card(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = PixelSurfaceElevated),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(14.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .background(CoolCyan.copy(alpha = 0.18f)),
                     contentAlignment = Alignment.Center
@@ -381,18 +340,18 @@ fun DioramaHomeScreen(
                     Icon(
                         imageVector = Icons.Outlined.Air,
                         contentDescription = "Ventilation insight",
-                        tint = CoolCyan
+                        tint = CoolCyan,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Smart ventilation advisor",
-                        style = MaterialTheme.typography.labelLarge,
+                        text = "${activeRoom.archetype.standardCitation} • comfort ${activeRoom.comfortScore}/100",
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = CoolCyan
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = ventilationText,
                         style = MaterialTheme.typography.bodySmall,
@@ -402,96 +361,164 @@ fun DioramaHomeScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // 6. Modern 2x2 Bento Grid for Psychrometric Metrics
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Temperature & Feels-Like Card
-            BentoMetricCard(
-                title = "Temperature",
-                primaryValue = settings.tempUnit.format(activeRoom.temperatureC),
-                secondaryLabel = "Feels like ${settings.tempUnit.format(activeRoom.feelsLikeC)}",
-                footnote = String.format(
-                    Locale.UK,
-                    "1h trend: %+.1f%s • target %.0f–%.0f%s",
-                    settings.tempUnit.convert(activeRoom.temperatureC) -
-                        settings.tempUnit.convert(activeRoom.temperatureC - activeRoom.tempTrend1hC),
-                    settings.tempUnit.symbol,
-                    settings.tempUnit.convert(activeRoom.archetype.idealTempMinC),
-                    settings.tempUnit.convert(activeRoom.archetype.idealTempMaxC),
-                    settings.tempUnit.symbol
-                ),
-                accentColor = temperatureAccentColor(activeRoom.temperatureC),
-                icon = Icons.Outlined.Thermostat,
-                modifier = Modifier.weight(1f)
+        // 6. When in Full Stack View, show a compressed scrollable summary strip; otherwise full 2x2 Bento Grid
+        if (wholeHomeOverview) {
+            CompressedMetricsStrip(
+                activeRoom = activeRoom,
+                snapshot = snapshot,
+                settings = settings
             )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                BentoMetricCard(
+                    title = "Temperature",
+                    primaryValue = settings.tempUnit.format(activeRoom.temperatureC),
+                    secondaryLabel = "Feels like ${settings.tempUnit.format(activeRoom.feelsLikeC)}",
+                    footnote = String.format(
+                        Locale.UK,
+                        "1h trend: %+.1f%s • target %.0f–%.0f%s",
+                        settings.tempUnit.convert(activeRoom.temperatureC) -
+                            settings.tempUnit.convert(activeRoom.temperatureC - activeRoom.tempTrend1hC),
+                        settings.tempUnit.symbol,
+                        settings.tempUnit.convert(activeRoom.archetype.idealTempMinC),
+                        settings.tempUnit.convert(activeRoom.archetype.idealTempMaxC),
+                        settings.tempUnit.symbol
+                    ),
+                    accentColor = temperatureAccentColor(activeRoom.temperatureC),
+                    icon = Icons.Outlined.Thermostat,
+                    modifier = Modifier.weight(1f)
+                )
 
-            // Relative & Absolute Humidity Card
-            BentoMetricCard(
-                title = "Humidity and vapour",
-                primaryValue = String.format(Locale.UK, "%.0f%%", activeRoom.humidityPct),
-                secondaryLabel = String.format(
-                    Locale.UK,
-                    "Absolute: %.1f g/m³",
-                    activeRoom.absoluteHumidityGm3
-                ),
-                footnote = String.format(
-                    Locale.UK,
-                    "VPD: %.2f kPa • 1h trend: %+.1f%%",
-                    activeRoom.vapourPressureDeficitKpa,
-                    activeRoom.humidityTrend1hPct
-                ),
-                accentColor = humidityAccentColor(activeRoom.humidityPct),
-                icon = Icons.Outlined.WaterDrop,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Dew Point & Mould / Condensation Risk Card
-            val mouldColor = when (activeRoom.mouldRisk) {
-                MouldRiskLevel.LOW -> ComfortEmerald
-                MouldRiskLevel.MODERATE -> ThermalAmber
-                MouldRiskLevel.HIGH -> ThermalCoral
+                BentoMetricCard(
+                    title = "Humidity and vapour",
+                    primaryValue = String.format(Locale.UK, "%.0f%%", activeRoom.humidityPct),
+                    secondaryLabel = String.format(
+                        Locale.UK,
+                        "Absolute: %.1f g/m³",
+                        activeRoom.absoluteHumidityGm3
+                    ),
+                    footnote = String.format(
+                        Locale.UK,
+                        "VPD: %.2f kPa • alert >%.0f%% RH",
+                        activeRoom.vapourPressureDeficitKpa,
+                        activeRoom.archetype.scientificAlertHumidityMaxPct
+                    ),
+                    accentColor = humidityAccentColor(activeRoom.humidityPct),
+                    icon = Icons.Outlined.WaterDrop,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            BentoMetricCard(
-                title = "Dew point and mould",
-                primaryValue = settings.tempUnit.format(activeRoom.dewPointC),
-                secondaryLabel = activeRoom.mouldRisk.label,
-                footnote = activeRoom.mouldRisk.detail,
-                accentColor = mouldColor,
-                icon = Icons.Outlined.WbSunny,
-                modifier = Modifier.weight(1f)
-            )
 
-            // Barometric Pressure & GW1200 Weather Forecast Card
-            val pressureVal = snapshot.pressureHpa
-            BentoMetricCard(
-                title = "GW1200 barometer",
-                primaryValue = if (pressureVal != null) {
-                    settings.pressureUnit.format(pressureVal)
-                } else {
-                    "1015 hPa"
-                },
-                secondaryLabel = snapshot.pressureTrend3hHpa?.let {
-                    String.format(Locale.UK, "3h delta: %+.1f hPa", it)
-                } ?: "Steady pressure",
-                footnote = snapshot.pressureForecastText,
-                accentColor = CoolCyan,
-                icon = Icons.Outlined.Speed,
-                modifier = Modifier.weight(1f)
-            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                val mouldColor = when (activeRoom.mouldRisk) {
+                    MouldRiskLevel.LOW -> ComfortEmerald
+                    MouldRiskLevel.MODERATE -> ThermalAmber
+                    MouldRiskLevel.HIGH -> ThermalCoral
+                }
+                BentoMetricCard(
+                    title = "Dew point and mould",
+                    primaryValue = settings.tempUnit.format(activeRoom.dewPointC),
+                    secondaryLabel = activeRoom.mouldRisk.label,
+                    footnote = activeRoom.mouldRisk.detail,
+                    accentColor = mouldColor,
+                    icon = Icons.Outlined.WbSunny,
+                    modifier = Modifier.weight(1f)
+                )
+
+                val pressureVal = snapshot.pressureHpa
+                BentoMetricCard(
+                    title = "GW1200 barometer",
+                    primaryValue = if (pressureVal != null) {
+                        settings.pressureUnit.format(pressureVal)
+                    } else {
+                        "1015 hPa"
+                    },
+                    secondaryLabel = snapshot.pressureTrend3hHpa?.let {
+                        String.format(Locale.UK, "3h delta: %+.1f hPa", it)
+                    } ?: "Steady pressure",
+                    footnote = snapshot.pressureForecastText,
+                    accentColor = CoolCyan,
+                    icon = Icons.Outlined.Speed,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CompressedMetricsStrip(
+    activeRoom: SensorRoomState,
+    snapshot: HomeAtmosphereSnapshot,
+    settings: AppSettings
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "${activeRoom.roomName} summary (scroll for details)",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("Feels like", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
+                    Text(
+                        settings.tempUnit.format(activeRoom.feelsLikeC),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = temperatureAccentColor(activeRoom.temperatureC)
+                    )
+                }
+                Column {
+                    Text("Dew point", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
+                    Text(
+                        settings.tempUnit.format(activeRoom.dewPointC),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = CoolCyan
+                    )
+                }
+                Column {
+                    Text("Moisture", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
+                    Text(
+                        String.format(Locale.UK, "%.1f g/m³", activeRoom.absoluteHumidityGm3),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = ComfortEmerald
+                    )
+                }
+                Column {
+                    Text("Barometer", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
+                    Text(
+                        snapshot.pressureHpa?.let { settings.pressureUnit.format(it) } ?: "1015 hPa",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -574,13 +601,12 @@ private fun SimulationControlCard(
                 color = Color.White
             )
             Text(
-                text = "Adjust sliders to preview heat shimmer, humidity vapour droplets, window condensation, and day or night lighting.",
+                text = "Adjust sliders to preview thermometer colours, humidity vapour droplets, and day or night lighting.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFB0BEC5)
             )
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Time of day slider
             Text(
                 text = String.format(
                     Locale.UK,
@@ -598,7 +624,6 @@ private fun SimulationControlCard(
                 colors = SliderDefaults.colors(thumbColor = ThermalAmber, activeTrackColor = ThermalAmber)
             )
 
-            // Active room temperature offset
             val tempOffset = when (activeRoom.channelId) {
                 "gateway" -> simParams.livingRoomTempOffsetC
                 "ch1" -> simParams.bedroomTempOffsetC
@@ -623,7 +648,6 @@ private fun SimulationControlCard(
                 colors = SliderDefaults.colors(thumbColor = ThermalCoral, activeTrackColor = ThermalCoral)
             )
 
-            // Active room humidity offset
             val humOffset = when (activeRoom.channelId) {
                 "gateway" -> simParams.livingRoomHumidityOffsetPct
                 "ch1" -> simParams.bedroomHumidityOffsetPct
