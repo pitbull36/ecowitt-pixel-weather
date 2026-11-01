@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Ecowitt Atmosphere</string>
-    <string name="widget_name">Ecowitt Home Weather</string>
-    <string name="widget_description">Live temperature, humidity, dew point, and comfort across your GW1200 rooms and outdoor sensors.</string>
+    <string name="widget_name">Ecowitt Home Weather (4×2)</string>
+    <string name="widget_description">Circular temperature and humidity dials across all your GW1200 rooms and outdoor sensors.</string>
+    <string name="single_room_widget_name">Ecowitt Room Circle (1×1)</string>
+    <string name="single_room_widget_description">1×1 circular gauge with temperature and humidity bezel arcs for your selected room.</string>
 </resources>

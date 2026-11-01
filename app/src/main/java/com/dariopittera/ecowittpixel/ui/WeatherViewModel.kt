@@ -72,6 +72,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     val isSyncingWatch: StateFlow<Boolean> = _isSyncingWatch.asStateFlow()
 
     private var pollingJob: Job? = null
+    private var pendingSelectChannelId: String? = null
 
     private val watchMessageListener = MessageClient.OnMessageReceivedListener { event: MessageEvent ->
         if (event.path == WearDataLayerBridge.PATH_REQUEST_SYNC) {
@@ -111,7 +112,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                     if (_settings.value.notificationsEnabled) {
                         WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
                     }
-                    runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                    runCatching { EcowittGlanceWidget.updateAllWidgets(getApplication()) }
                     pushSnapshotToWatchQuietly(updated)
                 }
             }
@@ -161,11 +162,19 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 apiClient.fetchAtmosphere(_settings.value, _simParams.value)
             )
             _snapshot.value = updated
+            pendingSelectChannelId?.let { chId ->
+                val idx = updated.rooms.indexOfFirst { it.channelId == chId }
+                if (idx >= 0) {
+                    _selectedRoomIndex.value = idx
+                    _wholeHomeOverview.value = false
+                    pendingSelectChannelId = null
+                }
+            }
             historyStore.saveWidgetSnapshotCache(updated)
             if (_settings.value.notificationsEnabled) {
                 WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
             }
-            runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+            runCatching { EcowittGlanceWidget.updateAllWidgets(getApplication()) }
             pushSnapshotToWatchQuietly(updated)
         }
     }
@@ -173,6 +182,15 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     fun selectRoomIndex(index: Int) {
         val maxIdx = (_snapshot.value.rooms.size - 1).coerceAtLeast(0)
         _selectedRoomIndex.value = index.coerceIn(0, maxIdx)
+    }
+
+    fun selectRoomByChannelId(channelId: String) {
+        pendingSelectChannelId = channelId
+        val idx = _snapshot.value.rooms.indexOfFirst { it.channelId == channelId }
+        if (idx >= 0) {
+            _selectedRoomIndex.value = idx
+            _wholeHomeOverview.value = false
+        }
     }
 
     fun toggleWholeHomeOverview() {
@@ -197,7 +215,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             refreshNow()
         } else {
             viewModelScope.launch {
-                runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                runCatching { EcowittGlanceWidget.updateAllWidgets(getApplication()) }
                 pushSnapshotToWatchQuietly(immediatelyRenamed)
             }
         }
@@ -239,7 +257,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
             }
             viewModelScope.launch {
-                runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                runCatching { EcowittGlanceWidget.updateAllWidgets(getApplication()) }
                 pushSnapshotToWatchQuietly(updated)
             }
         }
@@ -292,7 +310,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             _snapshot.value = result
             historyStore.saveWidgetSnapshotCache(result)
             _statusBanner.value = result.syncMessage
-            runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+            runCatching { EcowittGlanceWidget.updateAllWidgets(getApplication()) }
             pushSnapshotToWatchQuietly(result)
         }
     }

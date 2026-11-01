@@ -44,7 +44,7 @@ class WeatherSyncWorker(
 
         val snapshot = api.fetchAtmosphere(settings, SimulationParameters())
         store.saveWidgetSnapshotCache(snapshot)
-        runCatching { EcowittGlanceWidget().updateAll(applicationContext) }
+        runCatching { EcowittGlanceWidget.updateAllWidgets(applicationContext) }
         runCatching { WearDataLayerBridge.pushToWatch(applicationContext, store, settings, snapshot) }
 
         if (settings.notificationsEnabled) {

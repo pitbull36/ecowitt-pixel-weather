@@ -39,11 +39,18 @@ import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceCard
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_SELECT_CHANNEL_ID = "select_channel_id"
+    }
+
     private val viewModel: WeatherViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        intent?.getStringExtra(EXTRA_SELECT_CHANNEL_ID)?.let { chId ->
+            viewModel.selectRoomByChannelId(chId)
+        }
 
         setContent {
             EcowittPixelTheme {
@@ -177,6 +184,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_SELECT_CHANNEL_ID)?.let { chId ->
+            viewModel.selectRoomByChannelId(chId)
         }
     }
 }

@@ -38,7 +38,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Jetpack Glance Home Screen Widget Receiver -->
+        <!-- Jetpack Glance 4x2 Multi-Room Home Screen Widget Receiver -->
         <receiver
             android:name=".widget.EcowittWidgetReceiver"
             android:exported="true"
@@ -50,6 +50,29 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/ecowitt_widget_info" />
         </receiver>
+
+        <!-- Jetpack Glance 1x1 Single-Room Circular Gauge Widget Receiver -->
+        <receiver
+            android:name=".widget.EcowittSingleRoomWidgetReceiver"
+            android:exported="true"
+            android:label="@string/single_room_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/ecowitt_single_room_widget_info" />
+        </receiver>
+
+        <!-- Configuration Activity for selecting the room on the 1x1 Circular Widget -->
+        <activity
+            android:name=".widget.WidgetRoomConfigActivity"
+            android:exported="true"
+            android:theme="@style/Theme.EcowittPixel">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
         <!-- FileProvider for CSV / JSON sensor history exports -->
         <provider
