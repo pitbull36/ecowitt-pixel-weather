@@ -65,16 +65,18 @@ class EcowittTileService : TileService() {
                     store.saveSettings(settings)
 
                     var snapshot = dlSnap
-                        ?: store.loadWidgetSnapshotCache()
+                        ?: store.loadWidgetSnapshotCache()?.takeIf { !it.isSimulatedOrPreview }
                         ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
 
                     if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE ||
-                        snapshot.source == ConnectionSource.DEMO_SIMULATION
+                        snapshot.isSimulatedOrPreview ||
+                        !store.hasSyncedFromPhone()
                     ) {
                         val fresh = EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
-                        if (fresh.source != ConnectionSource.DEMO_SIMULATION) {
+                        if (!fresh.isSimulatedOrPreview) {
                             snapshot = fresh
-                        } else {
+                        }
+                        if (snapshot.isSimulatedOrPreview || !store.hasSyncedFromPhone()) {
                             val (discSettings, discSnap) = WearDataLayerBridge.discoverPhoneOrGatewayOnLan(
                                 applicationContext,
                                 store
@@ -83,7 +85,7 @@ class EcowittTileService : TileService() {
                                 settings = discSettings.copy(demoModeEnabled = false)
                                 store.saveSettings(settings)
                             }
-                            if (discSnap != null) {
+                            if (discSnap != null && !discSnap.isSimulatedOrPreview) {
                                 snapshot = discSnap
                             }
                         }

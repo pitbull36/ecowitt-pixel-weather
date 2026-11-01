@@ -18,6 +18,9 @@ import com.dariopittera.ecowittpixel.model.RoomConfig
 import com.dariopittera.ecowittpixel.model.SimulationParameters
 import com.dariopittera.ecowittpixel.widget.EcowittGlanceWidget
 import com.dariopittera.ecowittpixel.worker.WeatherSyncWorker
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,11 +73,29 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     private var pollingJob: Job? = null
 
+    private val watchMessageListener = MessageClient.OnMessageReceivedListener { event: MessageEvent ->
+        if (event.path == WearDataLayerBridge.PATH_REQUEST_SYNC) {
+            viewModelScope.launch {
+                pushSnapshotToWatchQuietly(_snapshot.value)
+            }
+        }
+    }
+
     init {
         WearDataLayerBridge.startPhoneLanSyncServer(application)
+        runCatching {
+            Wearable.getMessageClient(application).addListener(watchMessageListener)
+        }
         refreshNow()
         startAutoPolling()
         WeatherSyncWorker.schedulePeriodicSync(application, _settings.value.pollingIntervalMinutes)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        runCatching {
+            Wearable.getMessageClient(getApplication<Application>()).removeListener(watchMessageListener)
+        }
     }
 
     private fun startAutoPolling() {
@@ -111,13 +132,21 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         if (_isSyncingWatch.value) return
         viewModelScope.launch {
             _isSyncingWatch.value = true
-            val synced = _settings.value.applyToSnapshot(_snapshot.value)
+            val currentSettings = _settings.value
+            val baseSnapshot = if (!currentSettings.demoModeEnabled &&
+                historyStore.isSimulatedSnapshot(_snapshot.value)
+            ) {
+                apiClient.fetchAtmosphere(currentSettings, _simParams.value)
+            } else {
+                _snapshot.value
+            }
+            val synced = currentSettings.applyToSnapshot(baseSnapshot)
             _snapshot.value = synced
             historyStore.saveWidgetSnapshotCache(synced)
             val result = WearDataLayerBridge.pushToWatch(
                 context = getApplication(),
                 store = historyStore,
-                settings = _settings.value,
+                settings = currentSettings,
                 snapshot = synced
             )
             _connectedWatchNodes.value = result.connectedNodes
@@ -238,10 +267,13 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _statusBanner.value = "Connecting to GW1200..."
             val liveTestSettings = _settings.value.copy(demoModeEnabled = false)
-            val result = apiClient.fetchAtmosphere(liveTestSettings, _simParams.value)
+            val rawResult = apiClient.fetchAtmosphere(liveTestSettings, _simParams.value)
+            val result = _settings.value.applyToSnapshot(rawResult)
             _snapshot.value = result
+            historyStore.saveWidgetSnapshotCache(result)
             _statusBanner.value = result.syncMessage
             runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+            pushSnapshotToWatchQuietly(result)
         }
     }
 

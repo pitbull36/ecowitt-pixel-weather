@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudSync
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -32,6 +35,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +51,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dariopittera.ecowittpixel.BuildConfig
@@ -89,6 +96,8 @@ fun SettingsScreen(
     var appKeyText by remember(settings.cloudApplicationKey) { mutableStateOf(settings.cloudApplicationKey) }
     var apiKeyText by remember(settings.cloudApiKey) { mutableStateOf(settings.cloudApiKey) }
     var macText by remember(settings.cloudDeviceMac) { mutableStateOf(settings.cloudDeviceMac) }
+    var showAppKey by remember { mutableStateOf(false) }
+    var showApiKey by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -223,7 +232,17 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Button(
-                    onClick = onSyncWatchNow,
+                    onClick = {
+                        onUpdateSettings(
+                            settings.copy(
+                                gatewayIp = ipText,
+                                cloudApplicationKey = appKeyText,
+                                cloudApiKey = apiKeyText,
+                                cloudDeviceMac = macText
+                            )
+                        )
+                        onSyncWatchNow()
+                    },
                     enabled = !isSyncingWatch,
                     colors = ButtonDefaults.buttonColors(containerColor = CoolCyan)
                 ) {
@@ -317,6 +336,32 @@ fun SettingsScreen(
                     onValueChange = { appKeyText = it },
                     label = { Text("Application key (from ecowitt.net user profile)") },
                     singleLine = true,
+                    visualTransformation = if (showAppKey) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        autoCorrectEnabled = false
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { showAppKey = !showAppKey }) {
+                            Icon(
+                                imageVector = if (showAppKey) {
+                                    Icons.Outlined.VisibilityOff
+                                } else {
+                                    Icons.Outlined.Visibility
+                                },
+                                contentDescription = if (showAppKey) {
+                                    "Hide application key"
+                                } else {
+                                    "Show application key"
+                                },
+                                tint = Color(0xFFB0BEC5)
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -325,6 +370,32 @@ fun SettingsScreen(
                     onValueChange = { apiKeyText = it },
                     label = { Text("API key") },
                     singleLine = true,
+                    visualTransformation = if (showApiKey) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        autoCorrectEnabled = false
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { showApiKey = !showApiKey }) {
+                            Icon(
+                                imageVector = if (showApiKey) {
+                                    Icons.Outlined.VisibilityOff
+                                } else {
+                                    Icons.Outlined.Visibility
+                                },
+                                contentDescription = if (showApiKey) {
+                                    "Hide API key"
+                                } else {
+                                    "Show API key"
+                                },
+                                tint = Color(0xFFB0BEC5)
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -488,7 +559,7 @@ fun SettingsScreen(
                         customName = room.roomName,
                         archetype = room.archetype
                     )
-                    var nameDraft by remember(room.channelId) { mutableStateOf(cfg.customName) }
+                    var nameDraft by remember(room.channelId, cfg.customName) { mutableStateOf(cfg.customName) }
 
                     Text(
                         text = "${room.hardwareLabel} (${room.channelId.uppercase()})",

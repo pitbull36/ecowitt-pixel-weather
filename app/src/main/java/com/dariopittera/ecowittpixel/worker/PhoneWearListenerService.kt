@@ -24,7 +24,7 @@ class PhoneWearListenerService : WearableListenerService() {
                 val settings = store.loadSettings()
                 val api = EcowittApiClient(store)
                 val cached = store.loadWidgetSnapshotCache()
-                if (cached != null) {
+                if (cached != null && !store.isSimulatedSnapshot(cached)) {
                     WearDataLayerBridge.pushToWatch(
                         applicationContext,
                         store,
@@ -32,13 +32,7 @@ class PhoneWearListenerService : WearableListenerService() {
                         settings.applyToSnapshot(cached)
                     )
                 }
-                val liveSettings = if (settings.gatewayIp.isNotBlank() ||
-                    (settings.cloudApplicationKey.isNotBlank() && settings.cloudApiKey.isNotBlank())
-                ) {
-                    settings.copy(demoModeEnabled = false)
-                } else {
-                    settings
-                }
+                val liveSettings = settings.copy(demoModeEnabled = false)
                 val fresh = api.fetchAtmosphere(liveSettings, SimulationParameters())
                 WearDataLayerBridge.pushToWatch(
                     applicationContext,

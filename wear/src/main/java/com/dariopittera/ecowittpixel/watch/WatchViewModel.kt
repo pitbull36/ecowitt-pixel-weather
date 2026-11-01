@@ -49,16 +49,11 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     )
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
-    private val _snapshot = MutableStateFlow(
-        historyStore.loadWidgetSnapshotCache()?.let { _settings.value.applyToSnapshot(it) }
-            ?: apiClient.generateSimulatedSnapshot(_settings.value, SimulationParameters())
-    )
-    val snapshot: StateFlow<HomeAtmosphereSnapshot> = _snapshot.asStateFlow()
+    private val _snapshot: MutableStateFlow<HomeAtmosphereSnapshot>
+    val snapshot: StateFlow<HomeAtmosphereSnapshot>
 
-    private val _breaches = MutableStateFlow<List<RoomAlertBreach>>(
-        AlertEvaluator.evaluateBreaches(_snapshot.value, _settings.value)
-    )
-    val breaches: StateFlow<List<RoomAlertBreach>> = _breaches.asStateFlow()
+    private val _breaches: MutableStateFlow<List<RoomAlertBreach>>
+    val breaches: StateFlow<List<RoomAlertBreach>>
 
     // Carousel index: 0..rooms.lastIndex are rooms, rooms.size is the Watch Sync & OTA page
     private val _carouselIndex = MutableStateFlow(0)
@@ -78,7 +73,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     private val _ambientMinuteTick = MutableStateFlow(0)
     val ambientMinuteTick: StateFlow<Int> = _ambientMinuteTick.asStateFlow()
 
-    private val _statusText = MutableStateFlow("Connecting to GW1200...")
+    private val _statusText = MutableStateFlow("Syncing with Pixel 10...")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
 
     private val _otaLabel = MutableStateFlow("Watch OTA update")
@@ -103,8 +98,10 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val app = getApplication<Application>()
             val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
-            applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
-            refreshWatchSurfaces(app)
+            if (dlSettings != null || dlSnap != null) {
+                applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
+                refreshWatchSurfaces(app)
+            }
         }
     }
 
@@ -118,8 +115,10 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                         historyStore,
                         app
                     )
-                    applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
-                    refreshWatchSurfaces(app)
+                    if (dlSettings != null || dlSnap != null) {
+                        applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
+                        refreshWatchSurfaces(app)
+                    }
                 }
             }
             WearDataLayerBridge.PATH_OPEN_ROOM_ON_WATCH -> {
@@ -130,6 +129,18 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        // Purge any stale v3.0.0 simulated cache so the watch never mistakes demo data for real cache
+        val initialCache = historyStore.loadWidgetSnapshotCache()
+        if (initialCache != null && initialCache.isSimulatedOrPreview) {
+            historyStore.clearWidgetSnapshotCache()
+        }
+        val cleanInitial = historyStore.loadWidgetSnapshotCache()?.let { _settings.value.applyToSnapshot(it) }
+            ?: apiClient.generateSimulatedSnapshot(_settings.value, SimulationParameters())
+        _snapshot = MutableStateFlow(cleanInitial)
+        snapshot = _snapshot.asStateFlow()
+        _breaches = MutableStateFlow(AlertEvaluator.evaluateBreaches(cleanInitial, _settings.value))
+        breaches = _breaches.asStateFlow()
+
         val filter = IntentFilter(ACTION_WATCH_DATA_UPDATED)
         ContextCompat.registerReceiver(
             application,
@@ -163,12 +174,19 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
             val liveCfg = newSettings.copy(demoModeEnabled = false)
             _settings.value = liveCfg
             historyStore.saveSettings(liveCfg)
+            historyStore.markSyncedFromPhone(true)
         }
         val activeSettings = _settings.value.copy(demoModeEnabled = false)
-        val snapToApply = newSnapshot ?: _snapshot.value
+        val snapToApply = if (newSnapshot != null && !newSnapshot.isSimulatedOrPreview) {
+            newSnapshot
+        } else {
+            _snapshot.value
+        }
         val renamedSnap = activeSettings.applyToSnapshot(snapToApply)
         _snapshot.value = renamedSnap
-        historyStore.saveWidgetSnapshotCache(renamedSnap)
+        if (!renamedSnap.isSimulatedOrPreview) {
+            historyStore.saveWidgetSnapshotCache(renamedSnap)
+        }
         _breaches.value = AlertEvaluator.evaluateBreaches(renamedSnap, activeSettings)
         _statusText.value = sourceLabel
     }
@@ -177,11 +195,15 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         val loadedSettings = historyStore.loadSettings().copy(demoModeEnabled = false)
         val loadedSnap = historyStore.loadWidgetSnapshotCache()
         _settings.value = loadedSettings
-        if (loadedSnap != null) {
+        if (loadedSnap != null && !loadedSnap.isSimulatedOrPreview) {
             val renamed = loadedSettings.applyToSnapshot(loadedSnap)
             _snapshot.value = renamed
             _breaches.value = AlertEvaluator.evaluateBreaches(renamed, loadedSettings)
-            _statusText.value = "Synced with Pixel 10"
+            _statusText.value = if (historyStore.hasSyncedFromPhone()) {
+                "Synced with Pixel 10"
+            } else {
+                "Live GW1200 (${renamed.gatewayIp})"
+            }
         }
     }
 
@@ -189,7 +211,12 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         pollingJob?.cancel()
         pollingJob = viewModelScope.launch {
             while (isActive) {
-                delay(18_000L)
+                val intervalMs = if (_snapshot.value.isSimulatedOrPreview || !historyStore.hasSyncedFromPhone()) {
+                    6_000L
+                } else {
+                    18_000L
+                }
+                delay(intervalMs)
                 if (!_isAmbient.value) {
                     syncHybridNow(quiet = true)
                 }
@@ -200,26 +227,34 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     fun syncHybridNow(quiet: Boolean = false) {
         viewModelScope.launch {
             if (!quiet) {
-                _statusText.value = "Syncing live data..."
+                _statusText.value = "Syncing with Pixel 10..."
             }
             val app = getApplication<Application>()
 
-            // 1. Request instant push from connected Pixel 10 & pull latest DataItem / Wi-Fi peer
+            // 1. Request instant push from connected Pixel 10 & pull DataItem / UDP / Wi-Fi peer
             val requestedCount = WearDataLayerBridge.requestSyncFromPhone(app)
             if (requestedCount > 0) {
-                delay(450L)
+                delay(400L)
             }
-            val (dlSettings, dlSnapshot) = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
+            var (dlSettings, dlSnapshot) = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
+            if (dlSettings == null && dlSnapshot == null && requestedCount > 0) {
+                delay(500L)
+                val retryPair = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
+                dlSettings = retryPair.first
+                dlSnapshot = retryPair.second
+            }
+
             if (dlSettings != null) {
                 val liveCfg = dlSettings.copy(demoModeEnabled = false)
                 _settings.value = liveCfg
                 historyStore.saveSettings(liveCfg)
+                historyStore.markSyncedFromPhone(true)
             }
 
             val liveSettings = _settings.value.copy(demoModeEnabled = false)
             val nowMs = System.currentTimeMillis()
-            val hasRealPhoneSnap = dlSnapshot != null && dlSnapshot.source != ConnectionSource.DEMO_SIMULATION
-            val isFreshPhoneSnap = hasRealPhoneSnap && (nowMs - (dlSnapshot?.lastSyncMs ?: 0L)) <= 90_000L
+            val hasRealPhoneSnap = dlSnapshot != null && !dlSnapshot.isSimulatedOrPreview
+            val isFreshPhoneSnap = hasRealPhoneSnap && (nowMs - (dlSnapshot?.lastSyncMs ?: 0L)) <= 120_000L
 
             if (dlSnapshot != null && isFreshPhoneSnap) {
                 val syncedSnap = liveSettings.applyToSnapshot(dlSnapshot)
@@ -231,13 +266,14 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            // 2. Poll real GW1200 over local Wi-Fi or Ecowitt Cloud API v3 directly (never demo mode)
+            // 2. Poll real GW1200 over local Wi-Fi or Ecowitt Cloud API v3 directly
             var directSnap = liveSettings.applyToSnapshot(
                 apiClient.fetchAtmosphere(liveSettings, SimulationParameters())
             )
 
-            // 3. If neither cached LAN IP nor Cloud keys succeeded yet, auto-discover Pixel 10 / GW1200 on local Wi-Fi
-            if (directSnap.source == ConnectionSource.DEMO_SIMULATION) {
+            // 3. If still showing preview/simulated data OR room names haven't synced from phone yet,
+            //    auto-discover Pixel 10 (UDP broadcast + HTTP :8765) and GW1200 (:80) on local network
+            if (directSnap.isSimulatedOrPreview || !historyStore.hasSyncedFromPhone()) {
                 if (!quiet) {
                     _statusText.value = "Finding Pixel 10 / GW1200 on Wi-Fi..."
                 }
@@ -247,21 +283,29 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                     _settings.value = liveDisc
                     historyStore.saveSettings(liveDisc)
                 }
-                if (discSnap != null) {
+                if (discSnap != null && !discSnap.isSimulatedOrPreview) {
                     directSnap = _settings.value.applyToSnapshot(discSnap)
-                } else if (dlSnapshot != null) {
+                } else if (dlSnapshot != null && !dlSnapshot.isSimulatedOrPreview) {
                     directSnap = _settings.value.applyToSnapshot(dlSnapshot)
+                } else {
+                    directSnap = _settings.value.applyToSnapshot(directSnap)
                 }
             }
 
             _snapshot.value = directSnap
-            historyStore.saveWidgetSnapshotCache(directSnap)
+            if (!directSnap.isSimulatedOrPreview) {
+                historyStore.saveWidgetSnapshotCache(directSnap)
+            }
             _breaches.value = AlertEvaluator.evaluateBreaches(directSnap, _settings.value)
-            _statusText.value = when (directSnap.source) {
-                ConnectionSource.LOCAL_LAN -> "Live GW1200 Wi-Fi (${directSnap.gatewayIp})"
-                ConnectionSource.ECOWITT_CLOUD -> "Live Ecowitt Cloud"
-                ConnectionSource.OFFLINE_CACHE -> "Synced with Pixel 10"
-                ConnectionSource.DEMO_SIMULATION -> "Open phone app to sync keys"
+            _statusText.value = when {
+                directSnap.isSimulatedOrPreview -> "Open Pixel 10 app (v6) to sync rooms"
+                directSnap.source == ConnectionSource.LOCAL_LAN && historyStore.hasSyncedFromPhone() ->
+                    "Synced with Pixel 10 • GW1200 (${directSnap.gatewayIp})"
+                directSnap.source == ConnectionSource.LOCAL_LAN ->
+                    "Live GW1200 (${directSnap.gatewayIp}) • Open phone app for room names"
+                directSnap.source == ConnectionSource.ECOWITT_CLOUD ->
+                    "Synced with Pixel 10 • Ecowitt Cloud"
+                else -> "Synced with Pixel 10"
             }
 
             refreshWatchSurfaces(app)

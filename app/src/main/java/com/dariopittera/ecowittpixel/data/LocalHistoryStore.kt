@@ -288,6 +288,9 @@ class LocalHistoryStore(private val context: Context) :
     }
 
     fun saveWidgetSnapshotCache(snapshot: HomeAtmosphereSnapshot) {
+        if (isSimulatedSnapshot(snapshot)) {
+            return
+        }
         val synced = loadSettings().applyToSnapshot(snapshot)
         val rawJson = serializeSnapshotJson(synced)
         prefs.edit().putString("cached_snapshot_json", rawJson).apply()
@@ -296,7 +299,39 @@ class LocalHistoryStore(private val context: Context) :
     fun loadWidgetSnapshotCache(): HomeAtmosphereSnapshot? {
         val raw = prefs.getString("cached_snapshot_json", null) ?: return null
         val snap = deserializeSnapshotJson(raw) ?: return null
+        if (isSimulatedSnapshot(snap)) {
+            prefs.edit().remove("cached_snapshot_json").apply()
+            return null
+        }
         return loadSettings().applyToSnapshot(snap)
+    }
+
+    fun clearWidgetSnapshotCache() {
+        prefs.edit().remove("cached_snapshot_json").apply()
+    }
+
+    fun hasSyncedFromPhone(): Boolean =
+        prefs.getBoolean("watch_has_synced_from_phone", false)
+
+    fun markSyncedFromPhone(synced: Boolean) {
+        prefs.edit().putBoolean("watch_has_synced_from_phone", synced).apply()
+    }
+
+    fun isSimulatedSnapshot(snapshot: HomeAtmosphereSnapshot): Boolean {
+        return snapshot.source == ConnectionSource.DEMO_SIMULATION ||
+            snapshot.gatewayFirmware == "GW1200C_V1.3.4" ||
+            snapshot.syncMessage.contains("Interactive simulation", ignoreCase = true) ||
+            snapshot.syncMessage.contains("preview telemetry", ignoreCase = true)
+    }
+
+    fun saveDiscoveredMac(mac: String) {
+        if (mac.isNotBlank()) {
+            prefs.edit().putString("cloud_mac", mac.trim()).apply()
+        }
+    }
+
+    fun loadDiscoveredMac(): String {
+        return prefs.getString("cloud_mac", "") ?: ""
     }
 
     fun serializeSettingsJson(settings: AppSettings): String {

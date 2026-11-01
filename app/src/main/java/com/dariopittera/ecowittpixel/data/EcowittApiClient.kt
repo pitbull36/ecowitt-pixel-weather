@@ -36,53 +36,57 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
         simParams: SimulationParameters
     ): HomeAtmosphereSnapshot = withContext(Dispatchers.IO) {
         if (settings.demoModeEnabled) {
-            val demoSnapshot = generateSimulatedSnapshot(settings, simParams)
-            historyStore.saveWidgetSnapshotCache(demoSnapshot)
-            return@withContext demoSnapshot
+            return@withContext settings.applyToSnapshot(generateSimulatedSnapshot(settings, simParams))
         }
 
-        // 1. Try GW1200 local LAN HTTP API first when preferred and IP is configured
-        if (settings.preferLocalLan && settings.gatewayIp.isNotBlank()) {
+        val hasCloudKeys = settings.cloudApplicationKey.isNotBlank() && settings.cloudApiKey.isNotBlank()
+        val hasCustomLanIp = settings.gatewayIp.isNotBlank() && settings.gatewayIp.trim() != "192.168.1.120"
+
+        // 1. Try GW1200 local LAN HTTP API first when preferred and a real IP is configured
+        if (settings.preferLocalLan && (hasCustomLanIp || !hasCloudKeys) && settings.gatewayIp.isNotBlank()) {
             val lanSnapshot = runCatching { fetchFromGw1200Lan(settings) }.getOrNull()
             if (lanSnapshot != null) {
-                // Optionally enrich history from Ecowitt Cloud if credentials exist and local history is sparse
-                val enriched = enrichWithHistory(lanSnapshot, settings)
+                val enriched = settings.applyToSnapshot(enrichWithHistory(lanSnapshot, settings))
                 historyStore.recordSnapshot(enriched)
                 return@withContext enriched
             }
         }
 
-        // 2. Fallback to Ecowitt Cloud API v3
-        if (settings.cloudApplicationKey.isNotBlank() && settings.cloudApiKey.isNotBlank()) {
+        // 2. Query Ecowitt Cloud API v3
+        if (hasCloudKeys) {
             val cloudSnapshot = runCatching { fetchFromEcowittCloud(settings) }.getOrNull()
             if (cloudSnapshot != null) {
-                val enriched = enrichWithHistory(cloudSnapshot, settings)
+                val enriched = settings.applyToSnapshot(enrichWithHistory(cloudSnapshot, settings))
                 historyStore.recordSnapshot(enriched)
                 return@withContext enriched
             }
         }
 
-        // 3. If Cloud wasn't preferred first, try LAN as second choice
-        if (!settings.preferLocalLan && settings.gatewayIp.isNotBlank()) {
+        // 3. Fallback to LAN if not already tried
+        if (settings.gatewayIp.isNotBlank()) {
             val lanSnapshot = runCatching { fetchFromGw1200Lan(settings) }.getOrNull()
             if (lanSnapshot != null) {
-                val enriched = enrichWithHistory(lanSnapshot, settings)
+                val enriched = settings.applyToSnapshot(enrichWithHistory(lanSnapshot, settings))
                 historyStore.recordSnapshot(enriched)
                 return@withContext enriched
             }
         }
 
-        // 4. Fallback to cached snapshot or simulation with informative status message
+        // 4. Fallback to real cached snapshot (never a simulated snapshot) or simulation preview
         val cached = historyStore.loadWidgetSnapshotCache()
-        if (cached != null) {
-            return@withContext cached.copy(
-                source = ConnectionSource.OFFLINE_CACHE,
-                syncMessage = "Gateway unreachable on LAN or cloud; showing last cached telemetry"
+        if (cached != null && !historyStore.isSimulatedSnapshot(cached)) {
+            return@withContext settings.applyToSnapshot(
+                cached.copy(
+                    source = ConnectionSource.OFFLINE_CACHE,
+                    syncMessage = "Gateway unreachable on LAN or cloud; showing last cached telemetry"
+                )
             )
         }
 
-        generateSimulatedSnapshot(settings, simParams).copy(
-            syncMessage = "No gateway reachable yet; showing preview telemetry"
+        settings.applyToSnapshot(
+            generateSimulatedSnapshot(settings, simParams).copy(
+                syncMessage = "No gateway reachable yet; showing preview telemetry"
+            )
         )
     }
 
@@ -249,7 +253,7 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
     fun fetchFromEcowittCloud(settings: AppSettings): HomeAtmosphereSnapshot {
         val appKey = URLEncoder.encode(settings.cloudApplicationKey.trim(), "UTF-8")
         val apiKey = URLEncoder.encode(settings.cloudApiKey.trim(), "UTF-8")
-        var mac = settings.cloudDeviceMac.trim()
+        var mac = settings.cloudDeviceMac.trim().ifBlank { historyStore.loadDiscoveredMac() }
 
         if (mac.isBlank()) {
             // Auto-discover first gateway MAC on the user's Ecowitt account
@@ -259,7 +263,12 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             val listData = listResp.optJSONObject("data")?.optJSONArray("list")
             if (listData != null && listData.length() > 0) {
                 mac = listData.getJSONObject(0).optString("mac", "")
+                if (mac.isNotBlank()) {
+                    historyStore.saveDiscoveredMac(mac)
+                }
             }
+            // Respect Ecowitt Cloud v3 1-req/sec rate limit between /device/list and /device/real_time
+            Thread.sleep(1100L)
         }
         require(mac.isNotBlank()) { "No Ecowitt device MAC found" }
 
@@ -267,7 +276,8 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
         val url =
             "https://api.ecowitt.net/api/v3/device/real_time?application_key=$appKey&api_key=$apiKey&mac=$encodedMac&call_back=all&temp_unitid=1&pressure_unitid=3"
         val root = JSONObject(httpGet(url, timeoutMs = 5000))
-        val data = root.getJSONObject("data")
+        val data = root.optJSONObject("data")
+            ?: throw IllegalStateException("Ecowitt cloud response missing data object: ${root.optString("msg")}")
 
         val now = System.currentTimeMillis()
         val rooms = ArrayList<SensorRoomState>()
@@ -364,9 +374,18 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             settings.cloudApiKey.isNotBlank() &&
             resolvedMac.isNotBlank()
         ) {
-            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 30) }
-            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 7) }
-            runCatching { fetchAndStoreCloudHistory(settings, resolvedMac, days = 1) }
+            runCatching {
+                Thread.sleep(1100L)
+                fetchAndStoreCloudHistory(settings, resolvedMac, days = 1)
+            }
+            runCatching {
+                Thread.sleep(1100L)
+                fetchAndStoreCloudHistory(settings, resolvedMac, days = 7)
+            }
+            runCatching {
+                Thread.sleep(1100L)
+                fetchAndStoreCloudHistory(settings, resolvedMac, days = 30)
+            }
         }
 
         val updatedRooms = snapshot.rooms.mapIndexed { idx, room ->

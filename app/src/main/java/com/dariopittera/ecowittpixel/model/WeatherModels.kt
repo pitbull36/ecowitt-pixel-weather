@@ -284,6 +284,12 @@ data class HomeAtmosphereSnapshot(
 
     val pressureForecastText: String
         get() = Psychrometrics.describePressureForecast(pressureHpa, pressureTrend3hHpa)
+
+    val isSimulatedOrPreview: Boolean
+        get() = source == ConnectionSource.DEMO_SIMULATION ||
+            gatewayFirmware == "GW1200C_V1.3.4" ||
+            syncMessage.contains("simulation", ignoreCase = true) ||
+            syncMessage.contains("preview", ignoreCase = true)
 }
 
 data class SimulationParameters(
