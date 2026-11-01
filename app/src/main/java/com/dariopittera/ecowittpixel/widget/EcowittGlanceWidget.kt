@@ -1,7 +1,9 @@
 package com.dariopittera.ecowittpixel.widget
 
 import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
@@ -15,11 +17,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
+import androidx.glance.LocalGlanceId
 import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
@@ -32,8 +40,10 @@ import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.appwidget.updateAll
 import androidx.glance.background
+import androidx.glance.currentState
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
@@ -45,9 +55,13 @@ import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
+import androidx.glance.layout.size
 import androidx.glance.layout.width
+import androidx.glance.state.GlanceStateDefinition
+import androidx.glance.state.PreferencesGlanceStateDefinition
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
+import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.dariopittera.ecowittpixel.MainActivity
@@ -68,17 +82,154 @@ import kotlin.math.sin
 object WidgetPreferences {
     private const val PREFS_NAME = "ecowitt_widget_room_prefs"
     val KEY_SELECT_CHANNEL_ID = ActionParameters.Key<String>(MainActivity.EXTRA_SELECT_CHANNEL_ID)
+    val KEY_APP_WIDGET_ID = ActionParameters.Key<Int>("app_widget_id")
 
-    fun saveWidgetRoomChannel(context: Context, appWidgetId: Int, channelId: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString("widget_room_$appWidgetId", channelId)
-            .apply()
+    val GLANCE_KEY_CHANNEL_ID = stringPreferencesKey("selected_channel_id")
+    val GLANCE_KEY_ROOM_INDEX = intPreferencesKey("selected_room_index")
+    val GLANCE_KEY_ROOM_NAME = stringPreferencesKey("selected_room_name")
+    val GLANCE_KEY_UPDATE_NONCE = longPreferencesKey("update_nonce")
+
+    /**
+     * Synchronously persists the selected room channel, index, and name for [appWidgetId],
+     * plus stores a fallback last-selected room in case the launcher queries before [appWidgetId]
+     * is mapped.
+     */
+    fun saveWidgetRoomSelection(
+        context: Context,
+        appWidgetId: Int,
+        channelId: String,
+        roomIndex: Int = -1,
+        roomName: String = ""
+    ) {
+        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            editor.putString("widget_room_$appWidgetId", channelId)
+            editor.putInt("widget_room_idx_$appWidgetId", roomIndex)
+            editor.putString("widget_room_name_$appWidgetId", roomName)
+        }
+        editor.putString("last_selected_channel_id", channelId)
+        editor.putInt("last_selected_room_idx", roomIndex)
+        editor.putString("last_selected_room_name", roomName)
+        editor.commit()
     }
 
-    fun getWidgetRoomChannel(context: Context, appWidgetId: Int): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString("widget_room_$appWidgetId", "gateway") ?: "gateway"
+    fun getWidgetRoomChannel(context: Context, appWidgetId: Int): String? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            val direct = prefs.getString("widget_room_$appWidgetId", null)
+            if (!direct.isNullOrBlank()) return direct
+        }
+        return prefs.getString("last_selected_channel_id", null)
+    }
+
+    fun getWidgetRoomIndex(context: Context, appWidgetId: Int): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID &&
+            prefs.contains("widget_room_idx_$appWidgetId")
+        ) {
+            return prefs.getInt("widget_room_idx_$appWidgetId", -1)
+        }
+        return prefs.getInt("last_selected_room_idx", -1)
+    }
+
+    /**
+     * Resolves the user's selected room from both Glance [Preferences] and synchronous
+     * [SharedPreferences], matching by channelId (case-insensitive), roomIndex, or custom roomName.
+     */
+    fun resolveSelectedRoom(
+        context: Context,
+        appWidgetId: Int,
+        glancePrefs: Preferences?,
+        snapshot: HomeAtmosphereSnapshot
+    ): SensorRoomState? {
+        val rooms = snapshot.rooms
+        if (rooms.isEmpty()) return null
+
+        val candidateChannelId = glancePrefs?.get(GLANCE_KEY_CHANNEL_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: getWidgetRoomChannel(context, appWidgetId)
+
+        if (!candidateChannelId.isNullOrBlank()) {
+            rooms.firstOrNull { it.channelId.equals(candidateChannelId, ignoreCase = true) }
+                ?.let { return it }
+        }
+
+        val candidateIndex = glancePrefs?.get(GLANCE_KEY_ROOM_INDEX)
+            ?: getWidgetRoomIndex(context, appWidgetId)
+        if (candidateIndex in rooms.indices) {
+            return rooms[candidateIndex]
+        }
+
+        val candidateName = glancePrefs?.get(GLANCE_KEY_ROOM_NAME)
+        if (!candidateName.isNullOrBlank()) {
+            rooms.firstOrNull { it.roomName.equals(candidateName, ignoreCase = true) }
+                ?.let { return it }
+        }
+
+        return snapshot.primaryGatewayRoom ?: rooms.firstOrNull()
+    }
+
+    /**
+     * Updates both synchronous SharedPreferences and Glance's per-widget DataStore state for
+     * [appWidgetId], then triggers an immediate Glance recomposition.
+     */
+    suspend fun applyRoomSelectionAndRefresh(
+        context: Context,
+        appWidgetId: Int,
+        channelId: String,
+        roomIndex: Int,
+        roomName: String
+    ) {
+        saveWidgetRoomSelection(context, appWidgetId, channelId, roomIndex, roomName)
+        val manager = GlanceAppWidgetManager(context)
+        val nonce = System.currentTimeMillis()
+
+        // Update matching single-room widget instances
+        val singleIds = runCatching {
+            manager.getGlanceIds(EcowittSingleRoomWidget::class.java)
+        }.getOrDefault(emptyList())
+        for (gId in singleIds) {
+            val idInt = runCatching { manager.getAppWidgetId(gId) }
+                .getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
+            if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID ||
+                idInt == appWidgetId ||
+                singleIds.size == 1
+            ) {
+                runCatching {
+                    updateAppWidgetState(context, PreferencesGlanceStateDefinition, gId) { prefs ->
+                        prefs.toMutablePreferences().apply {
+                            this[GLANCE_KEY_CHANNEL_ID] = channelId
+                            this[GLANCE_KEY_ROOM_INDEX] = roomIndex
+                            this[GLANCE_KEY_ROOM_NAME] = roomName
+                            this[GLANCE_KEY_UPDATE_NONCE] = nonce
+                        }
+                    }
+                    EcowittSingleRoomWidget().update(context, gId)
+                }
+            }
+        }
+
+        // Also update multi-room / resizable widget instances if the user configured one
+        val multiIds = runCatching {
+            manager.getGlanceIds(EcowittGlanceWidget::class.java)
+        }.getOrDefault(emptyList())
+        for (gId in multiIds) {
+            val idInt = runCatching { manager.getAppWidgetId(gId) }
+                .getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
+            if (idInt == appWidgetId) {
+                runCatching {
+                    updateAppWidgetState(context, PreferencesGlanceStateDefinition, gId) { prefs ->
+                        prefs.toMutablePreferences().apply {
+                            this[GLANCE_KEY_CHANNEL_ID] = channelId
+                            this[GLANCE_KEY_ROOM_INDEX] = roomIndex
+                            this[GLANCE_KEY_ROOM_NAME] = roomName
+                            this[GLANCE_KEY_UPDATE_NONCE] = nonce
+                        }
+                    }
+                    EcowittGlanceWidget().update(context, gId)
+                }
+            }
+        }
     }
 }
 
@@ -87,7 +238,7 @@ object WidgetPreferences {
  * - Upper curved bezel arc for Temperature (white <19°C, yellow 19–22.9°C, orange 23–25.9°C,
  *   red 26–29.9°C, and molten lava droplets >=30°C).
  * - Lower curved bezel arc for Humidity (water-blue palette #60A5FA / #38BDF8 / #0EA5E9 / #3B82F6).
- * - Clean room name, bold temperature, humidity % RH, and dew point inside the circular dial.
+ * - Clean room name, bold temperature, humidity % RH, and sync timestamp / dew point inside the dial.
  */
 object WidgetCircularGaugeRenderer {
 
@@ -95,7 +246,8 @@ object WidgetCircularGaugeRenderer {
         room: SensorRoomState,
         tempUnit: TempUnit,
         diameterPx: Int = 320,
-        showSubtitle: Boolean = true
+        showSubtitle: Boolean = true,
+        syncTimeStr: String? = null
     ): Bitmap {
         val bmp = Bitmap.createBitmap(diameterPx, diameterPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -250,10 +402,10 @@ object WidgetCircularGaugeRenderer {
         // 4. Typography inside the circular dial
         val cleanName = cleanRoomLabel(room.roomName)
         val roomLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-            color = 0xFFCBD5E1.toInt()
+            color = 0xFFE2E8F0.toInt()
             textAlign = Paint.Align.CENTER
-            textSize = diameterPx * 0.098f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textSize = diameterPx * 0.102f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         }
         val maxNameChars = if (diameterPx >= 280) 13 else 11
         val truncatedName = if (cleanName.length > maxNameChars) {
@@ -261,7 +413,7 @@ object WidgetCircularGaugeRenderer {
         } else {
             cleanName
         }
-        canvas.drawText(truncatedName, cx, cy - diameterPx * 0.17f, roomLabelPaint)
+        canvas.drawText(truncatedName, cx, cy - diameterPx * 0.175f, roomLabelPaint)
 
         // Hero Temperature in the centre
         val tempText = tempUnit.format(room.temperatureC, decimals = 1)
@@ -271,7 +423,7 @@ object WidgetCircularGaugeRenderer {
             textSize = diameterPx * 0.215f
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
         }
-        canvas.drawText(tempText, cx, cy + diameterPx * 0.055f, tempTextPaint)
+        canvas.drawText(tempText, cx, cy + diameterPx * 0.050f, tempTextPaint)
 
         // Humidity badge below temperature
         val humText = "${room.humidityPct.roundToInt()}% RH"
@@ -281,18 +433,22 @@ object WidgetCircularGaugeRenderer {
             textSize = diameterPx * 0.115f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
         }
-        canvas.drawText(humText, cx, cy + diameterPx * 0.215f, humTextPaint)
+        canvas.drawText(humText, cx, cy + diameterPx * 0.205f, humTextPaint)
 
-        // Optional Dew Point or Comfort subtitle near bottom inside the lower arc
+        // Bottom subtitle: either "↻ HH:mm" sync badge (for 1×1 widget) or Dew Point
         if (showSubtitle) {
-            val dpText = "DP ${tempUnit.format(room.dewPointC, decimals = 0)}"
+            val bottomLabel = if (!syncTimeStr.isNullOrBlank()) {
+                "↻ $syncTimeStr"
+            } else {
+                "DP ${tempUnit.format(room.dewPointC, decimals = 0)}"
+            }
             val subPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                color = 0xFF94A3B8.toInt()
+                color = if (!syncTimeStr.isNullOrBlank()) 0xFF7DD3FC.toInt() else 0xFF94A3B8.toInt()
                 textAlign = Paint.Align.CENTER
                 textSize = diameterPx * 0.082f
-                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             }
-            canvas.drawText(dpText, cx, cy + diameterPx * 0.325f, subPaint)
+            canvas.drawText(bottomLabel, cx, cy + diameterPx * 0.320f, subPaint)
         }
 
         return bmp
@@ -349,10 +505,103 @@ object WidgetCircularGaugeRenderer {
 }
 
 /**
+ * Shared 1×1 circular room widget composable with:
+ * - Main circular dial tapping directly into the selected room in [MainActivity]
+ * - Small bottom-right `↻` sync badge button triggering an immediate live sync ([RefreshWidgetAction])
+ * - Small top-right `⇄` room-cycle badge button cycling through rooms directly on the home screen ([CycleWidgetRoomAction])
+ */
+@Composable
+private fun SingleCircleRoomWidgetBox(
+    room: SensorRoomState,
+    circleBmp: Bitmap,
+    tempUnit: TempUnit,
+    appWidgetId: Int
+) {
+    Box(
+        modifier = GlanceModifier
+            .fillMaxSize()
+            .padding(1.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Main circular temperature & humidity dial
+        Image(
+            provider = ImageProvider(circleBmp),
+            contentDescription = "${room.roomName}: ${tempUnit.format(room.temperatureC)}, ${room.humidityPct.roundToInt()}% RH",
+            contentScale = ContentScale.Fit,
+            modifier = GlanceModifier
+                .fillMaxSize()
+                .clickable(
+                    actionStartActivity<MainActivity>(
+                        actionParametersOf(WidgetPreferences.KEY_SELECT_CHANNEL_ID to room.channelId)
+                    )
+                )
+        )
+
+        // Overlay row at top-right: small room-switch pill (⇄) to cycle rooms right from the widget
+        Column(
+            modifier = GlanceModifier.fillMaxSize(),
+            verticalAlignment = Alignment.Top,
+            horizontalAlignment = Alignment.End
+        ) {
+            Box(
+                modifier = GlanceModifier
+                    .size(22.dp)
+                    .cornerRadius(11.dp)
+                    .background(ColorProvider(Color(0xE6132642)))
+                    .clickable(
+                        actionRunCallback<CycleWidgetRoomAction>(
+                            actionParametersOf(WidgetPreferences.KEY_APP_WIDGET_ID to appWidgetId)
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "⇄",
+                    style = TextStyle(
+                        color = ColorProvider(Color(0xFFBAE6FD)),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                )
+            }
+        }
+
+        // Overlay row at bottom-right: small update/sync icon button (↻) to sync immediately
+        Column(
+            modifier = GlanceModifier.fillMaxSize(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalAlignment = Alignment.End
+        ) {
+            Box(
+                modifier = GlanceModifier
+                    .size(22.dp)
+                    .cornerRadius(11.dp)
+                    .background(ColorProvider(Color(0xE6132642)))
+                    .clickable(actionRunCallback<RefreshWidgetAction>()),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "↻",
+                    style = TextStyle(
+                        color = ColorProvider(Color(0xFF38BDF8)),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                )
+            }
+        }
+    }
+}
+
+/**
  * 4×2 (and responsive) Multi-Room Home Screen Widget upgraded with circular temperature and
  * humidity gauges for each room, plus automatic 1×1 single-circle mode when resized small.
  */
 class EcowittGlanceWidget : GlanceAppWidget() {
+
+    override val stateDefinition: GlanceStateDefinition<Preferences> = PreferencesGlanceStateDefinition
 
     companion object {
         private val CIRCLE_1X1_SIZE = DpSize(56.dp, 56.dp)
@@ -361,6 +610,38 @@ class EcowittGlanceWidget : GlanceAppWidget() {
         private val EXPANDED_SIZE = DpSize(260.dp, 210.dp)
 
         suspend fun updateAllWidgets(context: Context) {
+            val manager = GlanceAppWidgetManager(context)
+            val nonce = System.currentTimeMillis()
+
+            // Increment update nonce in Glance Preferences so active sessions recompose immediately
+            val multiIds = runCatching {
+                manager.getGlanceIds(EcowittGlanceWidget::class.java)
+            }.getOrDefault(emptyList())
+            for (gId in multiIds) {
+                runCatching {
+                    updateAppWidgetState(context, PreferencesGlanceStateDefinition, gId) { prefs ->
+                        prefs.toMutablePreferences().apply {
+                            this[WidgetPreferences.GLANCE_KEY_UPDATE_NONCE] = nonce
+                        }
+                    }
+                    EcowittGlanceWidget().update(context, gId)
+                }
+            }
+
+            val singleIds = runCatching {
+                manager.getGlanceIds(EcowittSingleRoomWidget::class.java)
+            }.getOrDefault(emptyList())
+            for (gId in singleIds) {
+                runCatching {
+                    updateAppWidgetState(context, PreferencesGlanceStateDefinition, gId) { prefs ->
+                        prefs.toMutablePreferences().apply {
+                            this[WidgetPreferences.GLANCE_KEY_UPDATE_NONCE] = nonce
+                        }
+                    }
+                    EcowittSingleRoomWidget().update(context, gId)
+                }
+            }
+
             runCatching { EcowittGlanceWidget().updateAll(context) }
             runCatching { EcowittSingleRoomWidget().updateAll(context) }
         }
@@ -371,47 +652,60 @@ class EcowittGlanceWidget : GlanceAppWidget() {
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val store = LocalHistoryStore(context)
-        val settings = store.loadSettings()
-        val cached = store.loadWidgetSnapshotCache()
-            ?: settings.applyToSnapshot(
-                EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
-            )
-
-        val appWidgetId = runCatching {
-            GlanceAppWidgetManager(context).getAppWidgetId(id)
-        }.getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
-        val configuredChannelId = WidgetPreferences.getWidgetRoomChannel(context, appWidgetId)
-        val selectedRoom = cached.rooms.firstOrNull { it.channelId == configuredChannelId }
-            ?: cached.primaryGatewayRoom
-            ?: cached.rooms.firstOrNull()
-
-        val singleCircleBmp = selectedRoom?.let {
-            WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
-                room = it,
-                tempUnit = settings.tempUnit,
-                diameterPx = 320,
-                showSubtitle = true
-            )
-        }
-
-        val roomCircleBitmaps = cached.rooms.take(3).associate { room ->
-            room.channelId to WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
-                room = room,
-                tempUnit = settings.tempUnit,
-                diameterPx = 230,
-                showSubtitle = true
-            )
-        }
-
         provideContent {
+            val prefs = currentState<Preferences>()
+            // Subscribe to nonce and room selection changes inside provideContent so Glance recomposes
+            val nonce = prefs[WidgetPreferences.GLANCE_KEY_UPDATE_NONCE] ?: 0L
+            val localContext = LocalContext.current
+            val glanceId = LocalGlanceId.current
+
+            val store = LocalHistoryStore(localContext)
+            val settings = store.loadSettings()
+            val cached = store.loadWidgetSnapshotCache()
+                ?: settings.applyToSnapshot(
+                    EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
+                )
+
+            val appWidgetId = runCatching {
+                GlanceAppWidgetManager(localContext).getAppWidgetId(glanceId)
+            }.getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
+
+            val selectedRoom = WidgetPreferences.resolveSelectedRoom(
+                context = localContext,
+                appWidgetId = appWidgetId,
+                glancePrefs = prefs,
+                snapshot = cached
+            )
+            val timeStr = SimpleDateFormat("HH:mm", Locale.UK).format(Date(cached.lastSyncMs))
+
+            val singleCircleBmp = if (nonce >= 0L && selectedRoom != null) {
+                WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
+                    room = selectedRoom,
+                    tempUnit = settings.tempUnit,
+                    diameterPx = 340,
+                    showSubtitle = true,
+                    syncTimeStr = timeStr
+                )
+            } else null
+
+            val roomCircleBitmaps = cached.rooms.take(3).associate { room ->
+                room.channelId to WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
+                    room = room,
+                    tempUnit = settings.tempUnit,
+                    diameterPx = 230,
+                    showSubtitle = true,
+                    syncTimeStr = null
+                )
+            }
+
             GlanceTheme {
                 WidgetContent(
                     snapshot = cached,
                     selectedRoom = selectedRoom,
                     singleCircleBmp = singleCircleBmp,
                     roomCircleBitmaps = roomCircleBitmaps,
-                    tempUnit = settings.tempUnit
+                    tempUnit = settings.tempUnit,
+                    appWidgetId = appWidgetId
                 )
             }
         }
@@ -423,7 +717,8 @@ class EcowittGlanceWidget : GlanceAppWidget() {
         selectedRoom: SensorRoomState?,
         singleCircleBmp: Bitmap?,
         roomCircleBitmaps: Map<String, Bitmap>,
-        tempUnit: TempUnit
+        tempUnit: TempUnit,
+        appWidgetId: Int
     ) {
         val size = LocalSize.current
         val isSingleCircle = size.width < 195.dp
@@ -431,25 +726,12 @@ class EcowittGlanceWidget : GlanceAppWidget() {
         val timeStr = SimpleDateFormat("HH:mm", Locale.UK).format(Date(snapshot.lastSyncMs))
 
         if (isSingleCircle && selectedRoom != null && singleCircleBmp != null) {
-            // Pure circular 1×1 / 2×2 gauge with transparent outer corners
-            Box(
-                modifier = GlanceModifier
-                    .fillMaxSize()
-                    .clickable(
-                        actionStartActivity<MainActivity>(
-                            actionParametersOf(WidgetPreferences.KEY_SELECT_CHANNEL_ID to selectedRoom.channelId)
-                        )
-                    )
-                    .padding(2.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    provider = ImageProvider(singleCircleBmp),
-                    contentDescription = "${selectedRoom.roomName}: ${tempUnit.format(selectedRoom.temperatureC)}, ${selectedRoom.humidityPct.roundToInt()}% RH",
-                    contentScale = ContentScale.Fit,
-                    modifier = GlanceModifier.fillMaxSize()
-                )
-            }
+            SingleCircleRoomWidgetBox(
+                room = selectedRoom,
+                circleBmp = singleCircleBmp,
+                tempUnit = tempUnit,
+                appWidgetId = appWidgetId
+            )
         } else {
             // 4×2 / 4×3 Multi-Room Card featuring 3 matching circular dials side by side
             Box(
@@ -476,7 +758,7 @@ class EcowittGlanceWidget : GlanceAppWidget() {
                                 )
                             )
                             Text(
-                                text = "${snapshot.gatewayModel} • updated $timeStr",
+                                text = "${snapshot.gatewayModel} • synced $timeStr (auto 15m)",
                                 style = TextStyle(
                                     color = ColorProvider(Color(0xFF90CAF9)),
                                     fontSize = 10.sp
@@ -561,7 +843,7 @@ class EcowittGlanceWidget : GlanceAppWidget() {
                                     style = TextStyle(
                                         color = ColorProvider(Color(0xFF38BDF8)),
                                         fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium
                                     )
                                 )
                                 Spacer(modifier = GlanceModifier.height(2.dp))
@@ -583,64 +865,60 @@ class EcowittGlanceWidget : GlanceAppWidget() {
 }
 
 /**
- * Dedicated 1×1 Circular Room Widget (`Ecowitt Room Circle (1×1)`) where the user selects which
- * room (`Living room`, `Master bedroom`, `Balcony garden`, etc.) the circular dial displays.
+ * Dedicated 1×1 Circular Room Widget (`Ecowitt 1×1 Room Circle`) where the user selects which
+ * room (`CH0`, `CH1`, `CH2`, etc.) the circular dial displays, with reactive Glance Preferences
+ * state, a bottom-right `↻` sync button, and a top-right `⇄` room cycle button.
  */
 class EcowittSingleRoomWidget : GlanceAppWidget() {
 
+    override val stateDefinition: GlanceStateDefinition<Preferences> = PreferencesGlanceStateDefinition
     override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val store = LocalHistoryStore(context)
-        val settings = store.loadSettings()
-        val cached = store.loadWidgetSnapshotCache()
-            ?: settings.applyToSnapshot(
-                EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
-            )
-
-        val appWidgetId = runCatching {
-            GlanceAppWidgetManager(context).getAppWidgetId(id)
-        }.getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
-        val channelId = WidgetPreferences.getWidgetRoomChannel(context, appWidgetId)
-
-        val room = cached.rooms.firstOrNull { it.channelId == channelId }
-            ?: cached.primaryGatewayRoom
-            ?: cached.rooms.firstOrNull()
-
-        val circleBmp = room?.let {
-            WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
-                room = it,
-                tempUnit = settings.tempUnit,
-                diameterPx = 340,
-                showSubtitle = true
-            )
-        }
-
         provideContent {
+            val prefs = currentState<Preferences>()
+            // Subscribe to nonce and room selection inside provideContent so Glance recomposes immediately
+            val nonce = prefs[WidgetPreferences.GLANCE_KEY_UPDATE_NONCE] ?: 0L
+            val localContext = LocalContext.current
+            val glanceId = LocalGlanceId.current
+
+            val store = LocalHistoryStore(localContext)
+            val settings = store.loadSettings()
+            val cached = store.loadWidgetSnapshotCache()
+                ?: settings.applyToSnapshot(
+                    EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
+                )
+
+            val appWidgetId = runCatching {
+                GlanceAppWidgetManager(localContext).getAppWidgetId(glanceId)
+            }.getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
+
+            val room = WidgetPreferences.resolveSelectedRoom(
+                context = localContext,
+                appWidgetId = appWidgetId,
+                glancePrefs = prefs,
+                snapshot = cached
+            )
+            val timeStr = SimpleDateFormat("HH:mm", Locale.UK).format(Date(cached.lastSyncMs))
+
+            val circleBmp = if (nonce >= 0L && room != null) {
+                WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
+                    room = room,
+                    tempUnit = settings.tempUnit,
+                    diameterPx = 340,
+                    showSubtitle = true,
+                    syncTimeStr = timeStr
+                )
+            } else null
+
             GlanceTheme {
-                Box(
-                    modifier = GlanceModifier
-                        .fillMaxSize()
-                        .clickable(
-                            if (room != null) {
-                                actionStartActivity<MainActivity>(
-                                    actionParametersOf(WidgetPreferences.KEY_SELECT_CHANNEL_ID to room.channelId)
-                                )
-                            } else {
-                                actionStartActivity<MainActivity>()
-                            }
-                        )
-                        .padding(2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (circleBmp != null && room != null) {
-                        Image(
-                            provider = ImageProvider(circleBmp),
-                            contentDescription = "${room.roomName}: ${settings.tempUnit.format(room.temperatureC)}, ${room.humidityPct.roundToInt()}% RH",
-                            contentScale = ContentScale.Fit,
-                            modifier = GlanceModifier.fillMaxSize()
-                        )
-                    }
+                if (room != null && circleBmp != null) {
+                    SingleCircleRoomWidgetBox(
+                        room = room,
+                        circleBmp = circleBmp,
+                        tempUnit = settings.tempUnit,
+                        appWidgetId = appWidgetId
+                    )
                 }
             }
         }
@@ -659,5 +937,60 @@ class RefreshWidgetAction : ActionCallback {
         val fresh = settings.applyToSnapshot(api.fetchAtmosphere(settings, SimulationParameters()))
         store.saveWidgetSnapshotCache(fresh)
         EcowittGlanceWidget.updateAllWidgets(context)
+    }
+}
+
+/**
+ * Allows the user to tap the small `⇄` button on any 1×1 circular widget to cycle directly
+ * through their rooms (`CH0` -> `CH1` -> `CH2` -> `CH0`) right on the home screen.
+ */
+class CycleWidgetRoomAction : ActionCallback {
+    override suspend fun onAction(
+        context: Context,
+        glanceId: GlanceId,
+        parameters: ActionParameters
+    ) {
+        val store = LocalHistoryStore(context)
+        val settings = store.loadSettings()
+        val cached = store.loadWidgetSnapshotCache()
+            ?: settings.applyToSnapshot(
+                EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
+            )
+        val rooms = cached.rooms
+        if (rooms.isEmpty()) return
+
+        val manager = GlanceAppWidgetManager(context)
+        val appWidgetId = parameters[WidgetPreferences.KEY_APP_WIDGET_ID]
+            ?: runCatching { manager.getAppWidgetId(glanceId) }
+                .getOrDefault(AppWidgetManager.INVALID_APPWIDGET_ID)
+
+        var currentChannelId: String? = null
+        updateAppWidgetState(context, PreferencesGlanceStateDefinition, glanceId) { prefs ->
+            currentChannelId = prefs[WidgetPreferences.GLANCE_KEY_CHANNEL_ID]
+                ?: WidgetPreferences.getWidgetRoomChannel(context, appWidgetId)
+            val currentIdx = rooms.indexOfFirst {
+                it.channelId.equals(currentChannelId, ignoreCase = true)
+            }.let { if (it >= 0) it else 0 }
+            val nextIdx = (currentIdx + 1) % rooms.size
+            val nextRoom = rooms[nextIdx]
+
+            WidgetPreferences.saveWidgetRoomSelection(
+                context = context,
+                appWidgetId = appWidgetId,
+                channelId = nextRoom.channelId,
+                roomIndex = nextIdx,
+                roomName = nextRoom.roomName
+            )
+
+            prefs.toMutablePreferences().apply {
+                this[WidgetPreferences.GLANCE_KEY_CHANNEL_ID] = nextRoom.channelId
+                this[WidgetPreferences.GLANCE_KEY_ROOM_INDEX] = nextIdx
+                this[WidgetPreferences.GLANCE_KEY_ROOM_NAME] = nextRoom.roomName
+                this[WidgetPreferences.GLANCE_KEY_UPDATE_NONCE] = System.currentTimeMillis()
+            }
+        }
+
+        runCatching { EcowittSingleRoomWidget().update(context, glanceId) }
+        runCatching { EcowittGlanceWidget().update(context, glanceId) }
     }
 }

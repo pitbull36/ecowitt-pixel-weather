@@ -2,13 +2,13 @@ package com.dariopittera.ecowittpixel.widget
 
 import android.app.Activity
 import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,12 +53,17 @@ import com.dariopittera.ecowittpixel.ui.theme.CoolCyan
 import com.dariopittera.ecowittpixel.ui.theme.EcowittPixelTheme
 import com.dariopittera.ecowittpixel.ui.theme.PixelSkyNavy
 import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceCard
+import com.dariopittera.ecowittpixel.worker.WeatherSyncWorker
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 /**
  * Configuration activity launched when placing or reconfiguring the 1×1 Room Circle widget
- * (`EcowittSingleRoomWidgetReceiver`). Lets the user select which room sensor channel the
- * circular dial displays and previews the circular temperature + humidity bezel dial live.
+ * (`EcowittSingleRoomWidgetReceiver`) or resized 4×2 widget (`EcowittWidgetReceiver`).
+ * Lets the user select which room sensor channel the circular dial displays and previews the
+ * circular temperature + humidity bezel dial live.
  */
 class WidgetRoomConfigActivity : ComponentActivity() {
 
@@ -88,13 +93,16 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                 EcowittApiClient(store).generateSimulatedSnapshot(settings, SimulationParameters())
             )
         val initialChannel = WidgetPreferences.getWidgetRoomChannel(applicationContext, appWidgetId)
+        val syncTimeStr = SimpleDateFormat("HH:mm", Locale.UK).format(Date(snapshot.lastSyncMs))
 
         setContent {
             EcowittPixelTheme {
                 val scope = rememberCoroutineScope()
                 var selectedChannelId by remember {
                     mutableStateOf(
-                        snapshot.rooms.firstOrNull { it.channelId == initialChannel }?.channelId
+                        snapshot.rooms.firstOrNull {
+                            it.channelId.equals(initialChannel, ignoreCase = true)
+                        }?.channelId
                             ?: snapshot.rooms.firstOrNull()?.channelId
                             ?: "gateway"
                     )
@@ -119,7 +127,7 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Choose which room this circular temperature and humidity dial displays on your home screen.",
+                            text = "Choose which room this circular temperature and humidity dial displays on your home screen. You can also tap ⇄ on the widget corner anytime to switch rooms, or ↻ to force an immediate sync.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFB0BEC5)
                         )
@@ -130,17 +138,18 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                         val activeRoom = snapshot.rooms.firstOrNull { it.channelId == selectedChannelId }
                             ?: snapshot.rooms.firstOrNull()
                         if (activeRoom != null) {
-                            val previewBmp = remember(activeRoom, settings.tempUnit) {
+                            val previewBmp = remember(activeRoom, settings.tempUnit, syncTimeStr) {
                                 WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
                                     room = activeRoom,
                                     tempUnit = settings.tempUnit,
-                                    diameterPx = 320,
-                                    showSubtitle = true
+                                    diameterPx = 340,
+                                    showSubtitle = true,
+                                    syncTimeStr = syncTimeStr
                                 )
                             }
                             Box(
                                 modifier = Modifier
-                                    .size(136.dp)
+                                    .size(140.dp)
                                     .padding(4.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -159,7 +168,7 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            snapshot.rooms.forEach { room ->
+                            snapshot.rooms.forEachIndexed { idx, room ->
                                 val isSelected = room.channelId == selectedChannelId
                                 val dialThumb = remember(room, settings.tempUnit) {
                                     WidgetCircularGaugeRenderer.renderRoomCircleBitmap(
@@ -184,6 +193,13 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
                                             selectedChannelId = room.channelId
+                                            WidgetPreferences.saveWidgetRoomSelection(
+                                                context = applicationContext,
+                                                appWidgetId = appWidgetId,
+                                                channelId = room.channelId,
+                                                roomIndex = idx,
+                                                roomName = room.roomName
+                                            )
                                         }
                                 ) {
                                     Row(
@@ -230,13 +246,45 @@ class WidgetRoomConfigActivity : ComponentActivity() {
 
                         Button(
                             onClick = {
-                                WidgetPreferences.saveWidgetRoomChannel(
-                                    applicationContext,
-                                    appWidgetId,
-                                    selectedChannelId
-                                )
+                                val chosenIdx = snapshot.rooms.indexOfFirst {
+                                    it.channelId == selectedChannelId
+                                }.coerceAtLeast(0)
+                                val chosenRoom = snapshot.rooms.getOrNull(chosenIdx)
+                                val chosenName = chosenRoom?.roomName ?: ""
+
                                 scope.launch {
+                                    WidgetPreferences.applyRoomSelectionAndRefresh(
+                                        context = applicationContext,
+                                        appWidgetId = appWidgetId,
+                                        channelId = selectedChannelId,
+                                        roomIndex = chosenIdx,
+                                        roomName = chosenName
+                                    )
                                     EcowittGlanceWidget.updateAllWidgets(applicationContext)
+                                    WeatherSyncWorker.schedulePeriodicSync(
+                                        applicationContext,
+                                        settings.pollingIntervalMinutes
+                                    )
+
+                                    // Also broadcast standard AppWidgetManager update for immediate launcher redraw
+                                    val singleUpdateIntent = Intent(
+                                        applicationContext,
+                                        EcowittSingleRoomWidgetReceiver::class.java
+                                    ).apply {
+                                        action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(appWidgetId))
+                                    }
+                                    sendBroadcast(singleUpdateIntent)
+
+                                    val multiUpdateIntent = Intent(
+                                        applicationContext,
+                                        EcowittWidgetReceiver::class.java
+                                    ).apply {
+                                        action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(appWidgetId))
+                                    }
+                                    sendBroadcast(multiUpdateIntent)
+
                                     val resultValue = Intent().putExtra(
                                         AppWidgetManager.EXTRA_APPWIDGET_ID,
                                         appWidgetId
@@ -249,11 +297,11 @@ class WidgetRoomConfigActivity : ComponentActivity() {
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp)
+                                .height(52.dp)
                         ) {
                             Text(
-                                text = "Add 1×1 room circle widget",
-                                color = Color(0xFF06211E),
+                                text = "Use this room on home screen",
+                                color = Color(0xFF062019),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
                             )

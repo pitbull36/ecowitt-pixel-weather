@@ -14,6 +14,8 @@ import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -55,6 +57,7 @@ class WeatherSyncWorker(
 
     companion object {
         private const val WORK_NAME = "ecowitt_periodic_sync"
+        private const val IMMEDIATE_WORK_NAME = "ecowitt_immediate_widget_sync"
         private const val CHANNEL_ID = "ecowitt_atmosphere_alerts"
         private const val COOLDOWN_MS = 60L * 60L * 1000L // 60 minutes per unique criterion
 
@@ -65,6 +68,15 @@ class WeatherSyncWorker(
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
                 ExistingPeriodicWorkPolicy.UPDATE,
+                req
+            )
+        }
+
+        fun triggerImmediateSync(context: Context) {
+            val req = OneTimeWorkRequestBuilder<WeatherSyncWorker>().build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                IMMEDIATE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
                 req
             )
         }
