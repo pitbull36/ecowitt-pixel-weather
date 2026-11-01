@@ -320,6 +320,7 @@ fun AnalyticsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     HourlyThermalHeatmapCard(
                         room = focusedRoom,
+                        tempUnit = settings.tempUnit,
                         showHumidity = heatmapHumidity
                     )
                 }

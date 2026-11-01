@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -955,13 +956,111 @@ fun DailyRangeBarsCard(
     }
 }
 
+private data class HeatmapCellData(
+    val dayIndex: Int,
+    val hour: Int,
+    val dayLabelShort: String,
+    val dayLabelFull: String,
+    val tempC: Float?,
+    val humidityPct: Float?,
+    val dewPointC: Float?
+)
+
 @Composable
 fun HourlyThermalHeatmapCard(
     room: SensorRoomState,
+    tempUnit: TempUnit,
     showHumidity: Boolean,
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
+    val haptic = LocalHapticFeedback.current
+    val rows = 7
+    val cols = 24
+
+    // Build a 7-day × 24-hour calendar matrix aligned to real days and hours
+    val gridCells = remember(room.history, room.temperatureC, room.humidityPct) {
+        val nowMs = System.currentTimeMillis()
+        val todayStartCal = Calendar.getInstance().apply {
+            timeInMillis = nowMs
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val shortDayFmt = SimpleDateFormat("EEE", Locale.UK)
+        val fullDayFmt = SimpleDateFormat("EEE d MMM", Locale.UK)
+        val ptCal = Calendar.getInstance()
+
+        // Bucket historical points by (dayIndex 0..6, hour 0..23)
+        val buckets = HashMap<Pair<Int, Int>, MutableList<Pair<Float, Float>>>()
+        room.history.forEach { pt ->
+            ptCal.timeInMillis = pt.timestampMs
+            val ptHour = ptCal.get(Calendar.HOUR_OF_DAY)
+            val ptDayStart = Calendar.getInstance().apply {
+                timeInMillis = pt.timestampMs
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val diffDays = ((todayStartCal.timeInMillis - ptDayStart.timeInMillis) / (24L * 3600_000L)).toInt()
+            val rowIdx = (rows - 1) - diffDays
+            if (rowIdx in 0 until rows && ptHour in 0 until cols) {
+                buckets.getOrPut(rowIdx to ptHour) { mutableListOf() }
+                    .add(pt.temperatureC to pt.humidityPct)
+            }
+        }
+
+        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+
+        List(rows) { r ->
+            val dayStartMs = todayStartCal.timeInMillis - (rows - 1 - r) * 24L * 3600_000L
+            val shortLbl = shortDayFmt.format(Date(dayStartMs))
+            val fullLbl = fullDayFmt.format(Date(dayStartMs))
+            List(cols) { c ->
+                val bucket = buckets[r to c]
+                val pair: Pair<Float, Float>? = when {
+                    !bucket.isNullOrEmpty() -> {
+                        val avgT = bucket.map { it.first }.average().toFloat()
+                        val avgH = bucket.map { it.second }.average().toFloat()
+                        avgT to avgH
+                    }
+                    r == rows - 1 && c == currentHour -> {
+                        room.temperatureC to room.humidityPct
+                    }
+                    room.history.isNotEmpty() -> {
+                        // Fallback for sparse history: interpolate from nearest indexed sample if within range
+                        val fallbackIdx = r * cols + c
+                        room.history.getOrNull(fallbackIdx)?.let { it.temperatureC to it.humidityPct }
+                    }
+                    else -> null
+                }
+                val tC = pair?.first
+                val hPct = pair?.second
+                val dpC = if (tC != null && hPct != null) {
+                    Psychrometrics.computeDewPointC(tC, hPct)
+                } else null
+                HeatmapCellData(
+                    dayIndex = r,
+                    hour = c,
+                    dayLabelShort = shortLbl,
+                    dayLabelFull = fullLbl,
+                    tempC = tC,
+                    humidityPct = hPct,
+                    dewPointC = dpC
+                )
+            }
+        }
+    }
+
+    val currentHourDefault = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY).coerceIn(0, 23) }
+    var selectedRow by remember(room.channelId) { mutableIntStateOf(rows - 1) }
+    var selectedCol by remember(room.channelId) { mutableIntStateOf(currentHourDefault) }
+
+    val safeRow = selectedRow.coerceIn(0, rows - 1)
+    val safeCol = selectedCol.coerceIn(0, cols - 1)
+    val activeCell = gridCells[safeRow][safeCol]
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -976,70 +1075,240 @@ fun HourlyThermalHeatmapCard(
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Columns represent hours of the day (00:00 to 23:00) across the past 7 days.",
+            text = "Tap or drag across any hour cell to inspect temperature, humidity, dew point, and comfort.",
             style = MaterialTheme.typography.bodySmall,
             color = Color(0xFFB0BEC5)
         )
         Spacer(modifier = Modifier.height(10.dp))
 
+        // Interactive Popup Info Banner for the Tapped Cell (matching MultiRoomSplineChart style)
+        Surface(
+            color = Color(0xFF0E1828),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = if (showHumidity) {
+                        activeCell.humidityPct?.let { humidityAccentColor(it).copy(alpha = 0.5f) }
+                            ?: Color.White.copy(alpha = 0.1f)
+                    } else {
+                        activeCell.tempC?.let { temperatureAccentColor(it).copy(alpha = 0.5f) }
+                            ?: Color.White.copy(alpha = 0.1f)
+                    },
+                    shape = RoundedCornerShape(14.dp)
+                )
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = String.format(
+                            Locale.UK,
+                            "%s • %02d:00–%02d:59",
+                            activeCell.dayLabelFull,
+                            activeCell.hour,
+                            activeCell.hour
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = CoolCyan
+                    )
+                    Text(
+                        text = room.roomName.substringBefore(" ("),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (activeCell.tempC != null && activeCell.humidityPct != null && activeCell.dewPointC != null) {
+                    val comfort = Psychrometrics.evaluateComfort(
+                        activeCell.tempC,
+                        activeCell.humidityPct,
+                        room.archetype
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .clip(CircleShape)
+                                    .background(temperatureAccentColor(activeCell.tempC))
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Temp: ${tempUnit.format(activeCell.tempC)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .clip(CircleShape)
+                                    .background(humidityAccentColor(activeCell.humidityPct))
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = String.format(Locale.UK, "RH: %.0f%%", activeCell.humidityPct),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        }
+
+                        Text(
+                            text = "Dew: ${tempUnit.format(activeCell.dewPointC)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFCBD5E1)
+                        )
+
+                        Text(
+                            text = comfort.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = ComfortEmerald
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "No sensor reading recorded for this hour slot yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(155.dp)
+                .height(175.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xFF0E1828))
                 .padding(8.dp)
+                .pointerInput(Unit) {
+                    fun selectFromOffset(offset: Offset, width: Float, height: Float) {
+                        val leftLabelW = 42f
+                        val gridH = (height - 20f).coerceAtLeast(10f)
+                        val gridW = (width - leftLabelW).coerceAtLeast(10f)
+                        if (offset.x >= leftLabelW && offset.y <= gridH) {
+                            val c = (((offset.x - leftLabelW) / gridW) * cols).toInt().coerceIn(0, cols - 1)
+                            val r = ((offset.y / gridH) * rows).toInt().coerceIn(0, rows - 1)
+                            if (r != selectedRow || c != selectedCol) {
+                                selectedRow = r
+                                selectedCol = c
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                    }
+                    detectTapGestures { offset ->
+                        selectFromOffset(offset, size.width.toFloat(), size.height.toFloat())
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, _ ->
+                        change.consume()
+                        val leftLabelW = 42f
+                        val gridH = (size.height - 20f).coerceAtLeast(10f)
+                        val gridW = (size.width - leftLabelW).coerceAtLeast(10f)
+                        val pos = change.position
+                        if (pos.x >= leftLabelW - 8f) {
+                            val c = (((pos.x - leftLabelW) / gridW) * cols).toInt().coerceIn(0, cols - 1)
+                            val r = ((pos.y / gridH) * rows).toInt().coerceIn(0, rows - 1)
+                            if (r != selectedRow || c != selectedCol) {
+                                selectedRow = r
+                                selectedCol = c
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                    }
+                }
         ) {
-            val rows = 7
-            val cols = 24
             val leftLabelW = 42f
             val cellW = (size.width - leftLabelW) / cols
             val cellH = (size.height - 20f) / rows
-            val dayFmt = SimpleDateFormat("EEE", Locale.UK)
-            val now = System.currentTimeMillis()
 
             for (r in 0 until rows) {
-                val dayStartMs = now - (rows - 1 - r) * 24L * 3600_000L
+                val rowCells = gridCells[r]
+                val isSelectedRow = r == safeRow
                 val dayLbl = textMeasurer.measure(
-                    text = dayFmt.format(Date(dayStartMs)),
-                    style = TextStyle(color = Color(0xFF90A4AE), fontSize = 10.sp)
+                    text = rowCells.first().dayLabelShort,
+                    style = TextStyle(
+                        color = if (isSelectedRow) CoolCyan else Color(0xFF90A4AE),
+                        fontSize = 10.sp,
+                        fontWeight = if (isSelectedRow) FontWeight.Bold else FontWeight.Normal
+                    )
                 )
-                drawText(dayLbl, topLeft = Offset(2f, r * cellH + 2f))
+                drawText(dayLbl, topLeft = Offset(2f, r * cellH + (cellH - dayLbl.size.height) / 2f))
 
                 for (c in 0 until cols) {
-                    val idx = (r * cols + c).coerceIn(0, (room.history.size - 1).coerceAtLeast(0))
-                    val pt = room.history.getOrNull(idx)
-                    val cellColor = if (pt != null) {
+                    val cell = rowCells[c]
+                    val isSelected = r == safeRow && c == safeCol
+                    val cellColor = if (cell.tempC != null && cell.humidityPct != null) {
                         if (showHumidity) {
-                            humidityAccentColor(pt.humidityPct).copy(
-                                alpha = ((pt.humidityPct - 25f) / 65f).coerceIn(0.25f, 0.95f)
+                            humidityAccentColor(cell.humidityPct).copy(
+                                alpha = ((cell.humidityPct - 25f) / 65f).coerceIn(0.28f, 0.95f)
                             )
                         } else {
-                            temperatureAccentColor(pt.temperatureC).copy(
-                                alpha = ((pt.temperatureC - 8f) / 22f).coerceIn(0.30f, 0.95f)
+                            temperatureAccentColor(cell.tempC).copy(
+                                alpha = ((cell.tempC - 8f) / 22f).coerceIn(0.32f, 0.95f)
                             )
                         }
                     } else {
                         Color(0xFF1A273B)
                     }
+
+                    val topLeft = Offset(leftLabelW + c * cellW + 1.5f, r * cellH + 1.5f)
+                    val cellSize = Size((cellW - 3f).coerceAtLeast(2f), (cellH - 3f).coerceAtLeast(2f))
+
                     drawRoundRect(
                         color = cellColor,
-                        topLeft = Offset(leftLabelW + c * cellW + 1.5f, r * cellH + 1.5f),
-                        size = Size((cellW - 3f).coerceAtLeast(2f), (cellH - 3f).coerceAtLeast(2f)),
+                        topLeft = topLeft,
+                        size = cellSize,
                         cornerRadius = CornerRadius(4f, 4f)
                     )
+
+                    if (isSelected) {
+                        drawRoundRect(
+                            color = Color.White,
+                            topLeft = Offset(topLeft.x - 1f, topLeft.y - 1f),
+                            size = Size(cellSize.width + 2f, cellSize.height + 2f),
+                            cornerRadius = CornerRadius(5f, 5f),
+                            style = Stroke(width = 2.2f)
+                        )
+                    }
                 }
             }
 
             // Hour markers along bottom
             for (h in listOf(0, 6, 12, 18, 23)) {
+                val isSelectedHour = h == safeCol
                 val hLbl = textMeasurer.measure(
                     text = String.format(Locale.UK, "%02d:00", h),
-                    style = TextStyle(color = Color(0xFF78909C), fontSize = 9.sp)
+                    style = TextStyle(
+                        color = if (isSelectedHour) CoolCyan else Color(0xFF78909C),
+                        fontSize = 9.sp,
+                        fontWeight = if (isSelectedHour) FontWeight.Bold else FontWeight.Normal
+                    )
                 )
                 drawText(
                     hLbl,
-                    topLeft = Offset(leftLabelW + h * cellW - 4f, rows * cellH + 2f)
+                    topLeft = Offset(leftLabelW + h * cellW - 4f, rows * cellH + 3f)
                 )
             }
         }
