@@ -51,20 +51,60 @@ class LocalHistoryStore(private val context: Context) :
     }
 
     fun loadSettings(): AppSettings {
+        purgeLegacySyntheticHistoryIfNeeded()
         val defaults = AppSettings()
         val roomConfigsJson = prefs.getString("room_configs_json", null)
-        val roomConfigs = if (roomConfigsJson != null) {
+        val rawRoomConfigs = if (roomConfigsJson != null) {
             parseRoomConfigs(roomConfigsJson)
         } else {
             AppSettings.defaultRoomConfigs()
         }
         val customCriteriaJson = prefs.getString("custom_criteria_json", null)
-        val customCriteria = if (customCriteriaJson != null) {
+        val rawCustomCriteria = if (customCriteriaJson != null) {
             parseCustomCriteria(customCriteriaJson)
         } else {
             AppSettings.defaultCustomCriteria()
         }
-        return AppSettings(
+
+        val migrated = !prefs.getBoolean("migrated_non_alarmist_humidity_v12", false)
+        val roomConfigs = if (migrated) {
+            rawRoomConfigs.mapValues { (_, cfg) ->
+                val wasOldDefault = when (cfg.archetype) {
+                    RoomArchetype.LIVING_ROOM, RoomArchetype.BEDROOM, RoomArchetype.STUDY ->
+                        cfg.alertHumidityMaxPct <= 60.5f
+                    RoomArchetype.KITCHEN ->
+                        cfg.alertHumidityMaxPct <= 68.5f
+                    RoomArchetype.BATHROOM ->
+                        cfg.alertHumidityMaxPct <= 72.5f
+                    RoomArchetype.BALCONY_GARDEN ->
+                        false
+                }
+                if (wasOldDefault) {
+                    cfg.copy(alertHumidityMaxPct = cfg.archetype.scientificAlertHumidityMaxPct)
+                } else {
+                    cfg
+                }
+            }
+        } else {
+            rawRoomConfigs
+        }
+
+        val customCriteria = if (migrated) {
+            rawCustomCriteria.map { crit ->
+                if (crit.id == "crit_humid_bedroom" && crit.threshold <= 60.5f) {
+                    crit.copy(
+                        threshold = 68.0f,
+                        customMessage = "Bedroom humidity sustained above 68%: ventilate or run dehumidifier"
+                    )
+                } else {
+                    crit
+                }
+            }
+        } else {
+            rawCustomCriteria
+        }
+
+        val loaded = AppSettings(
             gatewayIp = prefs.getString("gateway_ip", defaults.gatewayIp) ?: defaults.gatewayIp,
             cloudApplicationKey = prefs.getString("cloud_app_key", "") ?: "",
             cloudApiKey = prefs.getString("cloud_api_key", "") ?: "",
@@ -102,6 +142,26 @@ class LocalHistoryStore(private val context: Context) :
             roomConfigs = roomConfigs,
             customCriteria = customCriteria
         )
+
+        if (migrated) {
+            prefs.edit().putBoolean("migrated_non_alarmist_humidity_v12", true).apply()
+            saveSettings(loaded)
+        }
+        return loaded
+    }
+
+    /**
+     * Removes any legacy synthetic backfill points that may have been persisted (e.g. on watch sync).
+     * Real local LAN/Cloud snapshots use 5-minute buckets (`timestamp_ms % 300000 == 0`) and Ecowitt
+     * Cloud history API timestamps are exact minute boundaries (`timestamp_ms % 60000 == 0`), whereas
+     * legacy `synthesizeBackfillHistory` points had arbitrary millisecond offsets (`% 60000 != 0`).
+     */
+    private fun purgeLegacySyntheticHistoryIfNeeded() {
+        if (prefs.getBoolean("purged_synthetic_history_v12", false)) return
+        runCatching {
+            writableDatabase.execSQL("DELETE FROM sensor_history WHERE (timestamp_ms % 60000) != 0")
+            prefs.edit().putBoolean("purged_synthetic_history_v12", true).apply()
+        }
     }
 
     fun saveSettings(settings: AppSettings) {
@@ -204,6 +264,7 @@ class LocalHistoryStore(private val context: Context) :
     }
 
     fun recordSnapshot(snapshot: HomeAtmosphereSnapshot) {
+        if (isSimulatedSnapshot(snapshot)) return
         val db = writableDatabase
         val bucketTimestamp = (snapshot.lastSyncMs / (5 * 60 * 1000L)) * (5 * 60 * 1000L)
         db.beginTransaction()

@@ -30,9 +30,9 @@ enum class RoomArchetype(
         idealHumidityMax = 60f,
         scientificAlertTempMinC = 18.0f,
         scientificAlertTempMaxC = 26.0f,
-        scientificAlertHumidityMaxPct = 60.0f,
-        standardCitation = "ASHRAE 55, CIBSE Guide A, and WHO",
-        standardRationale = "WHO minimum 18°C for living areas; CIBSE overheating limit at 26°C; EPA and ASHRAE dust mite and spore limit at 60% RH"
+        scientificAlertHumidityMaxPct = 68.0f,
+        standardCitation = "ASHRAE 55, ASHRAE 160, and WHO",
+        standardRationale = "WHO minimum 18°C for living areas; CIBSE overheating limit at 26°C; ASHRAE 160 sustained mould risk threshold at 68% RH (4h+ persistence)"
     ),
     BEDROOM(
         id = "bedroom",
@@ -42,12 +42,12 @@ enum class RoomArchetype(
         idealTempMinC = 16.5f,
         idealTempMaxC = 19.5f,
         idealHumidityMin = 40f,
-        idealHumidityMax = 55f,
+        idealHumidityMax = 58f,
         scientificAlertTempMinC = 15.5f,
         scientificAlertTempMaxC = 24.0f,
-        scientificAlertHumidityMaxPct = 58.0f,
-        standardCitation = "CIBSE Sleep Standard and WHO",
-        standardRationale = "Core body cooling for REM sleep requires 16.5–19.5°C; CIBSE sleep quality degrades above 24°C; bedding dust mite limit at 58% RH"
+        scientificAlertHumidityMaxPct = 68.0f,
+        standardCitation = "CIBSE Sleep Standard and ASHRAE 160",
+        standardRationale = "Core body cooling for REM sleep requires 16.5–19.5°C; transient 60–65% RH overnight is normal; sustained alert above 68% RH (4h+)"
     ),
     STUDY(
         id = "study",
@@ -57,12 +57,12 @@ enum class RoomArchetype(
         idealTempMinC = 20.0f,
         idealTempMaxC = 23.5f,
         idealHumidityMin = 40f,
-        idealHumidityMax = 55f,
+        idealHumidityMax = 58f,
         scientificAlertTempMinC = 18.5f,
         scientificAlertTempMaxC = 25.5f,
-        scientificAlertHumidityMaxPct = 60.0f,
-        standardCitation = "EN 16798-1 Category I Office",
-        standardRationale = "Cognitive performance and tear-film stability peak at 20–23.5°C and 40–55% RH; productivity declines above 25.5°C"
+        scientificAlertHumidityMaxPct = 68.0f,
+        standardCitation = "EN 16798-1 Category I and ASHRAE 160",
+        standardRationale = "Cognitive performance and tear-film stability peak at 20–23.5°C and 40–58% RH; sustained humidity alert above 68% RH"
     ),
     KITCHEN(
         id = "kitchen",
@@ -75,9 +75,9 @@ enum class RoomArchetype(
         idealHumidityMax = 65f,
         scientificAlertTempMinC = 16.5f,
         scientificAlertTempMaxC = 27.0f,
-        scientificAlertHumidityMaxPct = 68.0f,
+        scientificAlertHumidityMaxPct = 72.0f,
         standardCitation = "CIBSE Guide A Kitchen Standard",
-        standardRationale = "Active metabolic rate allows 18–23.5°C; sustained humidity above 68% RH requires extractor ventilation"
+        standardRationale = "Active metabolic rate allows 18–23.5°C; sustained humidity above 72% RH for 4h+ requires extractor ventilation"
     ),
     BATHROOM(
         id = "bathroom",
@@ -90,9 +90,9 @@ enum class RoomArchetype(
         idealHumidityMax = 70f,
         scientificAlertTempMinC = 19.5f,
         scientificAlertTempMaxC = 27.5f,
-        scientificAlertHumidityMaxPct = 72.0f,
+        scientificAlertHumidityMaxPct = 78.0f,
         standardCitation = "ASHRAE 160 Mould Germination Model",
-        standardRationale = "Prevents surface water activity aw > 0.80 on tiles and mirrors; sustained RH above 72% triggers mould germination"
+        standardRationale = "Prevents prolonged surface water activity aw > 0.80 on tiles and grout; sustained RH above 78% for 4h+ triggers alert"
     ),
     BALCONY_GARDEN(
         id = "balcony_garden",
@@ -255,7 +255,7 @@ data class SensorRoomState(
         get() = Psychrometrics.evaluateComfort(temperatureC, humidityPct, archetype)
 
     val mouldRisk: MouldRiskLevel
-        get() = Psychrometrics.evaluateMouldRisk(temperatureC, humidityPct, dewPointC)
+        get() = Psychrometrics.evaluateMouldRisk(temperatureC, humidityPct, dewPointC, history)
 
     val comfortScore: Int
         get() = Psychrometrics.computeComfortScore(temperatureC, humidityPct, archetype)
@@ -373,8 +373,8 @@ data class AppSettings(
                 channelId = "ch1",
                 metric = NotificationMetric.HUMIDITY,
                 operator = ComparisonOperator.ABOVE,
-                threshold = 60.0f,
-                customMessage = "Bedroom humidity above 60%: ventilate or run dehumidifier before sleep",
+                threshold = 68.0f,
+                customMessage = "Bedroom humidity sustained above 68%: ventilate or run dehumidifier",
                 enabled = true
             ),
             CustomAlertCriterion(
@@ -427,13 +427,73 @@ object Psychrometrics {
         }
     }
 
-    fun evaluateMouldRisk(tempC: Float, humidityPct: Float, dewPointC: Float): MouldRiskLevel {
+    fun evaluateMouldRisk(
+        tempC: Float,
+        humidityPct: Float,
+        dewPointC: Float,
+        history: List<HistoricalPoint> = emptyList()
+    ): MouldRiskLevel {
         val dewDepression = tempC - dewPointC
+        val sustainedAbove70 = isHumiditySustainedFromHistory(
+            currentHumidityPct = humidityPct,
+            history = history,
+            thresholdPct = 70f,
+            minSustainedHours = 6.0f
+        )
         return when {
-            humidityPct >= 70f || dewDepression < 3.2f -> MouldRiskLevel.HIGH
-            humidityPct >= 60f || dewDepression < 5.2f -> MouldRiskLevel.MODERATE
-            else -> MouldRiskLevel.LOW
+            dewDepression < 2.2f || humidityPct >= 76f || (humidityPct >= 70f && sustainedAbove70) ->
+                MouldRiskLevel.HIGH
+            humidityPct >= 66f || dewDepression < 4.0f ->
+                MouldRiskLevel.MODERATE
+            else ->
+                MouldRiskLevel.LOW
         }
+    }
+
+    /**
+     * Checks whether humidity has remained elevated above [thresholdPct] continuously over
+     * [minSustainedHours] (per ASHRAE 160 / VTT mould germination models, brief spikes do not
+     * cause mould; moisture must persist for hours). If humidity reaches an acute condensation
+     * level (>= [thresholdPct] + 10% or >= 78% RH), it triggers immediately.
+     */
+    fun isHumiditySustained(
+        room: SensorRoomState,
+        thresholdPct: Float,
+        minSustainedHours: Float = 4.0f
+    ): Boolean = isHumiditySustainedFromHistory(
+        currentHumidityPct = room.humidityPct,
+        history = room.history,
+        thresholdPct = thresholdPct,
+        minSustainedHours = minSustainedHours
+    )
+
+    fun isHumiditySustainedFromHistory(
+        currentHumidityPct: Float,
+        history: List<HistoricalPoint>,
+        thresholdPct: Float,
+        minSustainedHours: Float = 4.0f
+    ): Boolean {
+        if (currentHumidityPct < thresholdPct) return false
+        // Acute condensation spike (>= +10% RH above threshold or >= 78% RH) alerts immediately
+        if (currentHumidityPct >= (thresholdPct + 10f).coerceAtMost(82f) || currentHumidityPct >= 78f) {
+            return true
+        }
+        if (minSustainedHours <= 0.1f) return true
+
+        val nowMs = history.maxOfOrNull { it.timestampMs } ?: System.currentTimeMillis()
+        val windowMs = (minSustainedHours * 3600_000f).toLong()
+        val windowStartMs = nowMs - windowMs
+        val recentPoints = history.filter { it.timestampMs >= windowStartMs }
+
+        // Require history spanning at least 75% of the sustained window before firing a non-acute alert
+        val earliestInWindow = recentPoints.minOfOrNull { it.timestampMs } ?: return false
+        if (nowMs - earliestInWindow < (windowMs * 0.75f).toLong() || recentPoints.size < 3) {
+            return false
+        }
+
+        // Allow up to 15% brief dips (e.g. a momentary door opening) with a 1.0% hysteresis band
+        val elevatedCount = recentPoints.count { it.humidityPct >= (thresholdPct - 1.0f) }
+        return elevatedCount.toFloat() / recentPoints.size.toFloat() >= 0.85f
     }
 
     fun computeComfortScore(tempC: Float, humidityPct: Float, archetype: RoomArchetype): Int {
@@ -534,7 +594,7 @@ object AlertEvaluator {
                 val maxTemp = cfg?.alertTempMaxC ?: room.archetype.scientificAlertTempMaxC
                 val citation = room.archetype.standardCitation
 
-                if (room.humidityPct >= maxHum) {
+                if (room.humidityPct >= maxHum && Psychrometrics.isHumiditySustained(room, maxHum, minSustainedHours = 4.0f)) {
                     val outdoorDryerMsg = if (outdoor != null && !room.archetype.isOutdoor &&
                         room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3 > 1.0f
                     ) {
@@ -550,8 +610,8 @@ object AlertEvaluator {
                             roomName = room.roomName,
                             severity = AlertSeverity.HIGH_HUMIDITY,
                             shortBadge = "High RH ${room.humidityPct.toInt()}%",
-                            title = "${room.roomName}: high humidity (${room.humidityPct.toInt()}% RH)",
-                            body = "Exceeds ${maxHum.toInt()}% RH limit ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg"
+                            title = "${room.roomName}: sustained high humidity (${room.humidityPct.toInt()}% RH)",
+                            body = "Sustained above ${maxHum.toInt()}% RH limit for 4h+ ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg"
                         )
                     )
                 }
@@ -678,7 +738,13 @@ object AlertEvaluator {
                 NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
             }
 
-            if (crit.operator.matches(actualValue, crit.threshold)) {
+            val durationMet = if (crit.metric == NotificationMetric.HUMIDITY && crit.operator == ComparisonOperator.ABOVE) {
+                Psychrometrics.isHumiditySustained(targetRoom, crit.threshold, minSustainedHours = 4.0f)
+            } else {
+                true
+            }
+
+            if (crit.operator.matches(actualValue, crit.threshold) && durationMet) {
                 val formattedActual = String.format(java.util.Locale.UK, "%.1f%s", actualValue, crit.metric.unitSuffix)
                 val formattedTarget = String.format(java.util.Locale.UK, "%.1f%s", crit.threshold, crit.metric.unitSuffix)
                 val bodyText = if (crit.customMessage.isNotBlank()) {

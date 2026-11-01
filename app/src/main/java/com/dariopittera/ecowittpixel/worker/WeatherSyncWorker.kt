@@ -22,9 +22,11 @@ import com.dariopittera.ecowittpixel.data.EcowittApiClient
 import com.dariopittera.ecowittpixel.data.LocalHistoryStore
 import com.dariopittera.ecowittpixel.data.WearDataLayerBridge
 import com.dariopittera.ecowittpixel.model.AppSettings
+import com.dariopittera.ecowittpixel.model.ComparisonOperator
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.MouldRiskLevel
 import com.dariopittera.ecowittpixel.model.NotificationMetric
+import com.dariopittera.ecowittpixel.model.Psychrometrics
 import com.dariopittera.ecowittpixel.model.SimulationParameters
 import com.dariopittera.ecowittpixel.widget.EcowittGlanceWidget
 import java.util.Locale
@@ -177,7 +179,8 @@ class WeatherSyncWorker(
 
                     val humHighKey = "room_hum_high_${room.channelId}"
                     val humLowKey = "room_hum_low_${room.channelId}"
-                    if (room.humidityPct >= maxHum) {
+                    val humSustained = forceTest || Psychrometrics.isHumiditySustained(room, maxHum, minSustainedHours = 4.0f)
+                    if (room.humidityPct >= maxHum && humSustained) {
                         val outdoorDryerMsg = if (outdoor != null && !room.archetype.isOutdoor &&
                             room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3 > 1.0f
                         ) {
@@ -188,11 +191,11 @@ class WeatherSyncWorker(
                         dispatchCriterionAlert(
                             key = humHighKey,
                             notifId = 1000 + idx,
-                            title = "${room.roomName}: high humidity (${room.humidityPct.toInt()}% RH)",
-                            body = "Exceeds ${maxHum.toInt()}% RH limit ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg",
+                            title = "${room.roomName}: sustained high humidity (${room.humidityPct.toInt()}% RH)",
+                            body = "Sustained above ${maxHum.toInt()}% RH limit for 4h+ ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg",
                             channelId = room.channelId
                         )
-                    } else {
+                    } else if (room.humidityPct < maxHum - 1.5f) {
                         clearCriterionCooldown(humHighKey)
                     }
 
@@ -312,7 +315,13 @@ class WeatherSyncWorker(
                     NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
                 }
 
-                if (crit.operator.matches(actualValue, crit.threshold)) {
+                val durationMet = if (crit.metric == NotificationMetric.HUMIDITY && crit.operator == ComparisonOperator.ABOVE) {
+                    forceTest || Psychrometrics.isHumiditySustained(targetRoom, crit.threshold, minSustainedHours = 4.0f)
+                } else {
+                    true
+                }
+
+                if (crit.operator.matches(actualValue, crit.threshold) && durationMet) {
                     val formattedActual = String.format(Locale.UK, "%.1f%s", actualValue, crit.metric.unitSuffix)
                     val formattedTarget = String.format(Locale.UK, "%.1f%s", crit.threshold, crit.metric.unitSuffix)
                     val bodyText = if (crit.customMessage.isNotBlank()) {
@@ -327,7 +336,7 @@ class WeatherSyncWorker(
                         body = bodyText,
                         channelId = targetRoom.channelId
                     )
-                } else {
+                } else if (!crit.operator.matches(actualValue, crit.threshold)) {
                     clearCriterionCooldown(critKey)
                 }
             }

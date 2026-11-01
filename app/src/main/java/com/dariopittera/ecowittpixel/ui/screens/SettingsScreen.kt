@@ -1026,7 +1026,7 @@ private fun CustomNotificationCriteriaCard(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmartCriterionToggleRow(
                     title = "Mould and condensation risk",
-                    subtitle = "ASHRAE 160: dew point within 3.2°C of room temp or ≥70% RH",
+                    subtitle = "ASHRAE 160: dew point within 2.2°C of room temp, ≥76% RH, or ≥70% RH sustained 6h+",
                     checked = settings.mouldRiskNotifications,
                     onCheckedChange = { onUpdateSettings(settings.copy(mouldRiskNotifications = it)) }
                 )
@@ -1156,7 +1156,7 @@ private fun CustomNotificationCriteriaCard(
                                         draftMetric = m
                                         draftThreshold = when (m) {
                                             NotificationMetric.TEMPERATURE -> 19.0f
-                                            NotificationMetric.HUMIDITY -> 65.0f
+                                            NotificationMetric.HUMIDITY -> 68.0f
                                             NotificationMetric.DEW_POINT -> 16.0f
                                             NotificationMetric.PRESSURE -> 1002.0f
                                             NotificationMetric.COMFORT_SCORE -> 65.0f
@@ -1259,7 +1259,19 @@ private fun CustomNotificationCriteriaCard(
                             NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
                         }
                     } else null
-                    val isMet = actualVal != null && crit.enabled && crit.operator.matches(actualVal, crit.threshold)
+                    val isThresholdCrossed = actualVal != null && crit.enabled && crit.operator.matches(actualVal, crit.threshold)
+                    val isSustainedMet = if (isThresholdCrossed && targetRoom != null &&
+                        crit.metric == NotificationMetric.HUMIDITY && crit.operator == ComparisonOperator.ABOVE
+                    ) {
+                        com.dariopittera.ecowittpixel.model.Psychrometrics.isHumiditySustained(
+                            targetRoom,
+                            crit.threshold,
+                            minSustainedHours = 4.0f
+                        )
+                    } else {
+                        isThresholdCrossed
+                    }
+                    val isMet = isThresholdCrossed && isSustainedMet
 
                     Card(
                         shape = RoundedCornerShape(16.dp),
@@ -1338,16 +1350,21 @@ private fun CustomNotificationCriteriaCard(
                                 )
                                 if (actualVal != null) {
                                     Spacer(modifier = Modifier.width(8.dp))
+                                    val stateLabel = when {
+                                        isMet -> "Triggered"
+                                        isThresholdCrossed -> "Sustaining (<4h)"
+                                        else -> "OK"
+                                    }
                                     Text(
                                         text = String.format(
                                             Locale.UK,
                                             "Now %.1f%s • %s",
                                             actualVal,
                                             crit.metric.unitSuffix,
-                                            if (isMet) "Triggered" else "OK"
+                                            stateLabel
                                         ),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (isMet) ThermalAmber else ComfortEmerald,
+                                        color = if (isMet || isThresholdCrossed) ThermalAmber else ComfortEmerald,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 10.sp
                                     )

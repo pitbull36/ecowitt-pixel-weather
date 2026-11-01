@@ -135,10 +135,17 @@ fun MultiRoomSplineChart(
         return
     }
 
-    val primaryPoints = roomSeries.first().third
-    var scrubIndex by remember(primaryPoints.size) { mutableIntStateOf(primaryPoints.lastIndex) }
-    val safeScrubIdx = scrubIndex.coerceIn(0, primaryPoints.lastIndex)
-    val scrubbedTimestamp = primaryPoints[safeScrubIdx].first
+    val allTimestamps = remember(roomSeries) {
+        roomSeries.flatMap { series -> series.third.map { it.first } }
+    }
+    val minTimestampMs = remember(allTimestamps) { allTimestamps.minOrNull() ?: System.currentTimeMillis() }
+    val maxTimestampMs = remember(allTimestamps) { allTimestamps.maxOrNull() ?: System.currentTimeMillis() }
+    val timeSpanMs = (maxTimestampMs - minTimestampMs).coerceAtLeast(60_000L)
+    val maxGapMs = 150L * 60_000L // 2.5 hours: break line across unrecorded data gaps
+
+    var scrubFraction by remember(minTimestampMs, maxTimestampMs) { mutableFloatStateOf(1f) }
+    val safeScrubFraction = scrubFraction.coerceIn(0f, 1f)
+    val scrubbedTimestamp = minTimestampMs + (safeScrubFraction * timeSpanMs).toLong()
     val timeFormatter = remember(windowHours) {
         if (windowHours <= 24) {
             SimpleDateFormat("EEE HH:mm", Locale.UK)
@@ -182,8 +189,14 @@ fun MultiRoomSplineChart(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     roomSeries.forEach { (name, color, pts) ->
-                        val idx = safeScrubIdx.coerceIn(0, pts.lastIndex)
-                        val value = pts[idx].second
+                        val nearest = pts.minByOrNull { kotlin.math.abs(it.first - scrubbedTimestamp) }
+                        val isWithinWindow = nearest != null &&
+                            kotlin.math.abs(nearest.first - scrubbedTimestamp) <= 90L * 60_000L
+                        val valText = if (isWithinWindow && nearest != null) {
+                            String.format(Locale.UK, "%.1f%s", nearest.second, unitSuffix)
+                        } else {
+                            "No data"
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
@@ -193,11 +206,10 @@ fun MultiRoomSplineChart(
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "${name.substringBefore(" (")}: " +
-                                    String.format(Locale.UK, "%.1f%s", value, unitSuffix),
+                                text = "${name.substringBefore(" (")}: $valText",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White
+                                color = if (isWithinWindow) Color.White else Color(0xFF94A3B8)
                             )
                         }
                     }
@@ -218,25 +230,27 @@ fun MultiRoomSplineChart(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(215.dp)
-                .pointerInput(primaryPoints.size) {
+                .pointerInput(minTimestampMs, maxTimestampMs) {
                     detectTapGestures { offset ->
-                        val frac = (offset.x / size.width).coerceIn(0f, 1f)
-                        val newIdx = (frac * primaryPoints.lastIndex).toInt()
-                            .coerceIn(0, primaryPoints.lastIndex)
-                        if (newIdx != scrubIndex) {
-                            scrubIndex = newIdx
+                        val leftPad = 46f
+                        val rightPad = 14f
+                        val chartW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                        val frac = ((offset.x - leftPad) / chartW).coerceIn(0f, 1f)
+                        if (kotlin.math.abs(frac - scrubFraction) > 0.005f) {
+                            scrubFraction = frac
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
                     }
                 }
-                .pointerInput(primaryPoints.size) {
+                .pointerInput(minTimestampMs, maxTimestampMs) {
                     detectHorizontalDragGestures { change, _ ->
                         change.consume()
-                        val frac = (change.position.x / size.width).coerceIn(0f, 1f)
-                        val newIdx = (frac * primaryPoints.lastIndex).toInt()
-                            .coerceIn(0, primaryPoints.lastIndex)
-                        if (newIdx != scrubIndex) {
-                            scrubIndex = newIdx
+                        val leftPad = 46f
+                        val rightPad = 14f
+                        val chartW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                        val frac = ((change.position.x - leftPad) / chartW).coerceIn(0f, 1f)
+                        if (kotlin.math.abs(frac - scrubFraction) > 0.005f) {
+                            scrubFraction = frac
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
                     }
@@ -267,11 +281,12 @@ fun MultiRoomSplineChart(
                 drawText(label, topLeft = Offset(4f, (y - label.size.height / 2f).coerceAtLeast(0f)))
             }
 
-            // Draw each room's smooth cubic Bézier spline
+            // Draw each room's smooth cubic Bézier spline, breaking cleanly across unrecorded gaps
             roomSeries.forEachIndexed { seriesIdx, (_, seriesColor, pts) ->
                 if (pts.size < 2) return@forEachIndexed
-                val screenPts = pts.mapIndexed { i, pair ->
-                    val x = leftPad + (i.toFloat() / pts.lastIndex.coerceAtLeast(1)) * chartW
+                val screenPts = pts.map { pair ->
+                    val timeFrac = ((pair.first - minTimestampMs).toFloat() / timeSpanMs.toFloat()).coerceIn(0f, 1f)
+                    val x = leftPad + timeFrac * chartW
                     val normY = ((pair.second - yMin) / (yMax - yMin)).coerceIn(0f, 1f)
                     val y = topPad + chartH * (1f - normY)
                     Offset(x, y)
@@ -280,29 +295,17 @@ fun MultiRoomSplineChart(
                 val splinePath = Path().apply {
                     moveTo(screenPts.first().x, screenPts.first().y)
                     for (i in 0 until screenPts.lastIndex) {
+                        val dt = pts[i + 1].first - pts[i].first
                         val p0 = screenPts[i]
                         val p1 = screenPts[i + 1]
-                        val cx = (p0.x + p1.x) / 2f
-                        cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                        if (dt > maxGapMs) {
+                            // Leave a clean gap when there is no sensor data recorded
+                            moveTo(p1.x, p1.y)
+                        } else {
+                            val cx = (p0.x + p1.x) / 2f
+                            cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                        }
                     }
-                }
-
-                // Fill gradient under primary series
-                if (seriesIdx == 0) {
-                    val fillPath = Path().apply {
-                        addPath(splinePath)
-                        lineTo(screenPts.last().x, topPad + chartH)
-                        lineTo(screenPts.first().x, topPad + chartH)
-                        close()
-                    }
-                    drawPath(
-                        path = fillPath,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(seriesColor.copy(alpha = 0.28f), Color.Transparent),
-                            startY = topPad,
-                            endY = topPad + chartH
-                        )
-                    )
                 }
 
                 drawPath(
@@ -311,23 +314,29 @@ fun MultiRoomSplineChart(
                     style = Stroke(width = if (seriesIdx == 0) 4.2f else 3.2f, cap = StrokeCap.Round)
                 )
 
-                // Draw active scrub point circle
-                val sIdx = safeScrubIdx.coerceIn(0, screenPts.lastIndex)
-                val activePt = screenPts[sIdx]
-                drawCircle(
-                    color = seriesColor.copy(alpha = 0.35f),
-                    radius = 11f,
-                    center = activePt
-                )
-                drawCircle(
-                    color = seriesColor,
-                    radius = 5.5f,
-                    center = activePt
-                )
+                // Draw active scrub point circle only if a real reading exists near scrubbedTimestamp
+                val nearestIdx = pts.indices.minByOrNull { i ->
+                    kotlin.math.abs(pts[i].first - scrubbedTimestamp)
+                }
+                if (nearestIdx != null &&
+                    kotlin.math.abs(pts[nearestIdx].first - scrubbedTimestamp) <= 90L * 60_000L
+                ) {
+                    val activePt = screenPts[nearestIdx]
+                    drawCircle(
+                        color = seriesColor.copy(alpha = 0.35f),
+                        radius = 11f,
+                        center = activePt
+                    )
+                    drawCircle(
+                        color = seriesColor,
+                        radius = 5.5f,
+                        center = activePt
+                    )
+                }
             }
 
             // Vertical scrub cursor line
-            val cursorX = leftPad + (safeScrubIdx.toFloat() / primaryPoints.lastIndex.coerceAtLeast(1)) * chartW
+            val cursorX = leftPad + safeScrubFraction * chartW
             drawLine(
                 color = Color.White.copy(alpha = 0.45f),
                 start = Offset(cursorX, topPad),
@@ -874,6 +883,14 @@ fun DailyRangeBarsCard(
             fontWeight = FontWeight.SemiBold,
             color = Color.White
         )
+        if (dayBuckets.size < 7) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Showing ${dayBuckets.size} recorded day(s); earlier days have no sensor data.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF94A3B8)
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
 
         dayBuckets.forEach { (keyPair, pts) ->
@@ -1028,11 +1045,6 @@ fun HourlyThermalHeatmapCard(
                     }
                     r == rows - 1 && c == currentHour -> {
                         room.temperatureC to room.humidityPct
-                    }
-                    room.history.isNotEmpty() -> {
-                        // Fallback for sparse history: interpolate from nearest indexed sample if within range
-                        val fallbackIdx = r * cols + c
-                        room.history.getOrNull(fallbackIdx)?.let { it.temperatureC to it.humidityPct }
                     }
                     else -> null
                 }

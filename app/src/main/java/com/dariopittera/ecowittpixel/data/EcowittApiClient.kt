@@ -388,34 +388,23 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             }
         }
 
-        val updatedRooms = snapshot.rooms.mapIndexed { idx, room ->
-            // Load all permanently stored local SQLite history for this channel
+        // Record the live snapshot first so the current real point is present in SQLite
+        historyStore.recordSnapshot(snapshot)
+
+        val updatedRooms = snapshot.rooms.map { room ->
+            // Load strictly real recorded SQLite history for this channel (never synthesize backfill points)
             val dbHistory = historyStore.loadChannelHistory(room.channelId, sinceMs = 0L)
-            val fullHistory = if (dbHistory.size < 4) {
-                synthesizeBackfillHistory(
-                    currentTempC = room.temperatureC,
-                    currentHumidity = room.humidityPct,
-                    currentPressureHpa = room.relativePressureHpa,
-                    isOutdoor = room.archetype.isOutdoor,
-                    nowMs = now,
-                    seedOffset = idx * 1.1
-                )
+            val fullHistory = if (dbHistory.isNotEmpty()) {
+                dbHistory
             } else {
-                val earliestRealMs = dbHistory.first().timestampMs
-                if (earliestRealMs - sevenDaysAgo > 18L * 3600L * 1000L) {
-                    // Prepend earlier days of the 7-day window prior to earliest cloud point
-                    val syntheticWeek = synthesizeBackfillHistory(
-                        currentTempC = dbHistory.first().temperatureC,
-                        currentHumidity = dbHistory.first().humidityPct,
-                        currentPressureHpa = dbHistory.first().pressureHpa ?: room.relativePressureHpa,
-                        isOutdoor = room.archetype.isOutdoor,
-                        nowMs = now,
-                        seedOffset = idx * 1.1
-                    ).filter { it.timestampMs < earliestRealMs - 1800_000L }
-                    syntheticWeek + dbHistory
-                } else {
-                    dbHistory
-                }
+                listOf(
+                    HistoricalPoint(
+                        timestampMs = now,
+                        temperatureC = room.temperatureC,
+                        humidityPct = room.humidityPct,
+                        pressureHpa = room.relativePressureHpa
+                    )
+                )
             }
 
             val oneHourAgo = fullHistory.lastOrNull { it.timestampMs <= now - 45 * 60 * 1000L }
@@ -481,7 +470,7 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             val tsSecStr = keys.next()
             val tsMs = (tsSecStr.toLongOrNull() ?: continue) * 1000L
             val tempC = tempList.optString(tsSecStr).toFloatOrNull() ?: continue
-            val hum = humList?.optString(tsSecStr)?.toFloatOrNull() ?: 50f
+            val hum = humList?.optString(tsSecStr)?.toFloatOrNull() ?: continue
             val press = pressList?.optString(tsSecStr)?.toFloatOrNull()
             points.add(HistoricalPoint(tsMs, tempC, hum, press))
         }

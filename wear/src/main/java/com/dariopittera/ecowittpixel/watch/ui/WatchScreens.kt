@@ -368,9 +368,13 @@ private fun WatchRoomDetailScreen(
     }
 
     val isLiveNow = scrubFraction >= 0.97f || historyWindow.isEmpty()
+    val minHistTs = remember(historyWindow) { historyWindow.minOfOrNull { it.timestampMs } ?: 0L }
+    val maxHistTs = remember(historyWindow) { historyWindow.maxOfOrNull { it.timestampMs } ?: 0L }
+    val histSpanMs = (maxHistTs - minHistTs).coerceAtLeast(60_000L)
+    val targetScrubTs = minHistTs + (scrubFraction.coerceIn(0f, 1f) * histSpanMs).toLong()
+
     val scrubbedPoint = if (!isLiveNow && historyWindow.isNotEmpty()) {
-        val idx = ((historyWindow.size - 1) * scrubFraction).roundToInt().coerceIn(0, historyWindow.lastIndex)
-        historyWindow[idx]
+        historyWindow.minByOrNull { abs(it.timestampMs - targetScrubTs) }
     } else null
 
     val displayedRoom = if (scrubbedPoint != null) {
@@ -549,15 +553,20 @@ private fun WatchMini24hSparkline(
         if (points.size < 2) return@Canvas
         val minT = (points.minOf { it.temperatureC } - 0.5f)
         val maxT = (points.maxOf { it.temperatureC } + 0.5f).coerceAtLeast(minT + 1f)
+        val minTs = points.first().timestampMs
+        val maxTs = points.last().timestampMs
+        val spanMs = (maxTs - minTs).coerceAtLeast(60_000L)
+        val maxGapMs = 150L * 60_000L
 
         val tempPath = Path()
         val humPath = Path()
 
         points.forEachIndexed { i, pt ->
-            val x = (i.toFloat() / (points.size - 1).toFloat()) * size.width
+            val timeFrac = ((pt.timestampMs - minTs).toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+            val x = timeFrac * size.width
             val yTemp = size.height - ((pt.temperatureC - minT) / (maxT - minT)).coerceIn(0f, 1f) * size.height
             val yHum = size.height - (pt.humidityPct / 100f).coerceIn(0f, 1f) * size.height
-            if (i == 0) {
+            if (i == 0 || (pt.timestampMs - points[i - 1].timestampMs) > maxGapMs) {
                 tempPath.moveTo(x, yTemp)
                 humPath.moveTo(x, yHum)
             } else {
@@ -569,9 +578,10 @@ private fun WatchMini24hSparkline(
         drawPath(humPath, color = humColor.copy(alpha = 0.65f), style = Stroke(width = 1.8f))
         drawPath(tempPath, color = tempColor, style = Stroke(width = 2.4f))
 
-        val scrubX = (scrubFraction.coerceIn(0f, 1f)) * size.width
-        val idx = ((points.size - 1) * scrubFraction).roundToInt().coerceIn(0, points.lastIndex)
-        val activePt = points[idx]
+        val targetTs = minTs + (scrubFraction.coerceIn(0f, 1f) * spanMs).toLong()
+        val activePt = points.minByOrNull { abs(it.timestampMs - targetTs) } ?: points.last()
+        val activeTimeFrac = ((activePt.timestampMs - minTs).toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+        val scrubX = activeTimeFrac * size.width
         val activeY = size.height - ((activePt.temperatureC - minT) / (maxT - minT)).coerceIn(0f, 1f) * size.height
 
         drawLine(
