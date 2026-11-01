@@ -1,7 +1,10 @@
 package com.dariopittera.ecowittpixel.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,13 +13,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.IosShare
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -32,9 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.ui.charts.ChartMetric
@@ -42,9 +50,9 @@ import com.dariopittera.ecowittpixel.ui.charts.DailyRangeBarsCard
 import com.dariopittera.ecowittpixel.ui.charts.HourlyThermalHeatmapCard
 import com.dariopittera.ecowittpixel.ui.charts.MultiRoomSplineChart
 import com.dariopittera.ecowittpixel.ui.charts.PsychrometricComfortScatterChart
+import com.dariopittera.ecowittpixel.ui.theme.ComfortEmerald
 import com.dariopittera.ecowittpixel.ui.theme.CoolCyan
 import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceCard
-import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceElevated
 
 @Composable
 fun AnalyticsScreen(
@@ -60,6 +68,7 @@ fun AnalyticsScreen(
 
     val rooms = snapshot.rooms
     val focusedRoom = rooms.getOrNull(focusedRoomIdx.coerceIn(0, (rooms.size - 1).coerceAtLeast(0)))
+    val totalHistorySamples = remember(rooms) { rooms.sumOf { it.history.size } }
 
     Column(
         modifier = modifier
@@ -67,44 +76,100 @@ fun AnalyticsScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "Climate analytics",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Text(
-                    text = "Permanent on-device SQLite archive + Ecowitt cloud backfill",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB0BEC5)
-                )
-            }
+        Text(
+            text = "Climate analytics",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "Multi-sensor timeline, psychrometric comfort zone, and hourly thermal patterns.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFFB0BEC5)
+        )
 
-            AssistChip(
-                onClick = onExportCsv,
-                label = { Text("Export CSV") },
-                leadingIcon = {
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Clean dedicated SQLite archive & CSV export banner card
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF13263B)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = CoolCyan.copy(alpha = 0.18f),
+                    shape = RoundedCornerShape(20.dp)
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1B3552)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Storage,
+                            contentDescription = "SQLite archive",
+                            tint = CoolCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Local SQLite archive (${rooms.size} rooms)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "$totalHistorySamples logged points + Ecowitt cloud backfill",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Button(
+                    onClick = onExportCsv,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ComfortEmerald)
+                ) {
                     Icon(
                         imageVector = Icons.Outlined.IosShare,
                         contentDescription = "Export CSV",
+                        tint = Color(0xFF06211E),
                         modifier = Modifier.size(16.dp)
                     )
-                },
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = PixelSurfaceElevated,
-                    labelColor = Color.White,
-                    leadingIconContentColor = CoolCyan
-                )
-            )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Export CSV",
+                        color = Color(0xFF06211E),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 1. Multi-Sensor Overlaid Spline Timeline Card
         Card(
