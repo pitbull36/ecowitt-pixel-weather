@@ -54,6 +54,7 @@ mkdir -p app/src/main/res/raw
 cp "$WATCH_APK_SOURCE" app/src/main/res/raw/wearos_app.apk
 
 echo "==> Step 2: Building signed Pixel 10 Phone Release APK (versionCode=${VERSION_CODE}) via Gradle..."
+rm -rf app/build/intermediates/desugar_graph app/build/intermediates/project_dex_archive
 ./gradlew :app:assembleRelease
 
 # Phone APK starts with 'e' ('ecowitt-...') so it is ALWAYS assets[0] alphabetically on GitHub Releases,
