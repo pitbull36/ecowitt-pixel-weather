@@ -1,7 +1,11 @@
 package com.dariopittera.ecowittpixel.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,15 +20,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Radar
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Watch
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -524,7 +532,11 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 4. Per-Sensor Room Assignment & Scientific Standards
+        // 4. Per-Sensor Room Assignment & Scientific Standards (Tabbed by room for clean layout)
+        var selectedRoomIdx by remember { mutableStateOf(0) }
+        val activeRoomIdx = selectedRoomIdx.coerceIn(0, (snapshot.rooms.size - 1).coerceAtLeast(0))
+        val selectedRoom = snapshot.rooms.getOrNull(activeRoomIdx)
+
         Card(
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),
@@ -538,46 +550,96 @@ fun SettingsScreen(
                         tint = ThermalAmber
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Sensor channels and scientific alert standards",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-
-                snapshot.rooms.forEachIndexed { idx, room ->
-                    if (idx > 0) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            color = Color.White.copy(alpha = 0.08f)
+                    Column {
+                        Text(
+                            text = "Rooms and alert thresholds",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Select a room below to rename it, choose its 3D scene, and adjust alert limits.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFB0BEC5)
                         )
                     }
-                    val cfg = settings.roomConfigs[room.channelId] ?: RoomConfig(
-                        channelId = room.channelId,
-                        customName = room.roomName,
-                        archetype = room.archetype
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Room selector pill tabs
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    snapshot.rooms.forEachIndexed { idx, r ->
+                        val isSelected = idx == activeRoomIdx
+                        val roomCfg = settings.roomConfigs[r.channelId]
+                        val tabTitle = (roomCfg?.customName ?: r.roomName).substringBefore(" (")
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (isSelected) CoolCyan else Color(0xFF142236)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) CoolCyan else Color.White.copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { selectedRoomIdx = idx }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "$tabTitle (${r.channelId.uppercase()})",
+                                color = if (isSelected) Color(0xFF061624) else Color.White,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                if (selectedRoom != null) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    val cfg = settings.roomConfigs[selectedRoom.channelId] ?: RoomConfig(
+                        channelId = selectedRoom.channelId,
+                        customName = selectedRoom.roomName,
+                        archetype = selectedRoom.archetype
                     )
-                    var nameDraft by remember(room.channelId, cfg.customName) { mutableStateOf(cfg.customName) }
+                    var nameDraft by remember(selectedRoom.channelId, cfg.customName) {
+                        mutableStateOf(cfg.customName)
+                    }
 
                     Text(
-                        text = "${room.hardwareLabel} (${room.channelId.uppercase()})",
-                        style = MaterialTheme.typography.labelMedium,
+                        text = "Hardware channel: ${selectedRoom.hardwareLabel} (${selectedRoom.channelId.uppercase()})",
+                        style = MaterialTheme.typography.labelSmall,
                         color = CoolCyan
                     )
                     Spacer(modifier = Modifier.height(6.dp))
+
                     OutlinedTextField(
                         value = nameDraft,
                         onValueChange = {
                             nameDraft = it
-                            onUpdateRoomConfig(room.channelId, cfg.copy(customName = it))
+                            onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(customName = it))
                         },
                         label = { Text("Room display name") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "3D room archetype and scientific preset",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFCBD5E1),
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(modifier = Modifier.height(6.dp))
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -588,9 +650,8 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = cfg.archetype == arch,
                                 onClick = {
-                                    // Selecting a room preset automatically applies its scientific standard thresholds
                                     onUpdateRoomConfig(
-                                        room.channelId,
+                                        selectedRoom.channelId,
                                         cfg.copy(
                                             archetype = arch,
                                             alertTempMinC = arch.scientificAlertTempMinC,
@@ -608,103 +669,129 @@ fun SettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Standard: ${cfg.archetype.standardCitation}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ThermalAmber
-                    )
-                    Text(
-                        text = cfg.archetype.standardRationale,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 11.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Clean scientific standard summary box
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF142236)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = String.format(
-                                Locale.UK,
-                                "Room criteria: <%.1f°C, >%.1f°C, or >%.0f%% RH",
-                                cfg.alertTempMinC,
-                                cfg.alertTempMaxC,
-                                cfg.alertHumidityMaxPct
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AssistChip(
-                                onClick = {
-                                    onUpdateRoomConfig(
-                                        room.channelId,
-                                        cfg.copy(
-                                            alertTempMinC = cfg.archetype.scientificAlertTempMinC,
-                                            alertTempMaxC = cfg.archetype.scientificAlertTempMaxC,
-                                            alertHumidityMaxPct = cfg.archetype.scientificAlertHumidityMaxPct
-                                        )
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Room threshold alerts",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
                                     )
-                                },
-                                label = { Text("Reset to standard", fontSize = 10.sp) }
-                            )
-                            Switch(
-                                checked = cfg.alertsEnabled,
-                                onCheckedChange = {
-                                    onUpdateRoomConfig(room.channelId, cfg.copy(alertsEnabled = it))
+                                    Text(
+                                        text = cfg.archetype.standardCitation,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = ThermalAmber
+                                    )
                                 }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Switch(
+                                    checked = cfg.alertsEnabled,
+                                    onCheckedChange = {
+                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertsEnabled = it))
+                                    }
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = cfg.archetype.standardRationale,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFB0BEC5),
+                                fontSize = 11.sp
                             )
+
+                            if (cfg.alertsEnabled) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Slider 1: Min Temperature
+                                ThresholdSliderRow(
+                                    label = "Minimum temperature",
+                                    valueText = String.format(Locale.UK, "%.1f°C", cfg.alertTempMinC),
+                                    value = cfg.alertTempMinC,
+                                    valueRange = 0f..24f,
+                                    onValueChange = {
+                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertTempMinC = it))
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Slider 2: Max Temperature
+                                ThresholdSliderRow(
+                                    label = "Maximum temperature",
+                                    valueText = String.format(Locale.UK, "%.1f°C", cfg.alertTempMaxC),
+                                    value = cfg.alertTempMaxC,
+                                    valueRange = 20f..36f,
+                                    onValueChange = {
+                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertTempMaxC = it))
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Slider 3: Max Humidity
+                                ThresholdSliderRow(
+                                    label = "Maximum humidity",
+                                    valueText = String.format(Locale.UK, "%.0f%% RH", cfg.alertHumidityMaxPct),
+                                    value = cfg.alertHumidityMaxPct,
+                                    valueRange = 45f..90f,
+                                    onValueChange = {
+                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertHumidityMaxPct = it))
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        onUpdateRoomConfig(
+                                            selectedRoom.channelId,
+                                            cfg.copy(
+                                                alertTempMinC = cfg.archetype.scientificAlertTempMinC,
+                                                alertTempMaxC = cfg.archetype.scientificAlertTempMaxC,
+                                                alertHumidityMaxPct = cfg.archetype.scientificAlertHumidityMaxPct
+                                            )
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.RestartAlt,
+                                        contentDescription = "Reset thresholds",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = CoolCyan
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = String.format(
+                                            Locale.UK,
+                                            "Reset to %s standard (%.0f–%.0f°C, ≤%.0f%%)",
+                                            cfg.archetype.title.lowercase(Locale.UK),
+                                            cfg.archetype.scientificAlertTempMinC,
+                                            cfg.archetype.scientificAlertTempMaxC,
+                                            cfg.archetype.scientificAlertHumidityMaxPct
+                                        ),
+                                        fontSize = 11.sp,
+                                        color = CoolCyan
+                                    )
+                                }
+                            }
                         }
                     }
-
-                    Text(
-                        text = String.format(Locale.UK, "Min temperature alert: %.1f°C", cfg.alertTempMinC),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 11.sp
-                    )
-                    Slider(
-                        value = cfg.alertTempMinC,
-                        onValueChange = {
-                            onUpdateRoomConfig(room.channelId, cfg.copy(alertTempMinC = it))
-                        },
-                        valueRange = 0f..24f
-                    )
-
-                    Text(
-                        text = String.format(Locale.UK, "Max temperature alert: %.1f°C", cfg.alertTempMaxC),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 11.sp
-                    )
-                    Slider(
-                        value = cfg.alertTempMaxC,
-                        onValueChange = {
-                            onUpdateRoomConfig(room.channelId, cfg.copy(alertTempMaxC = it))
-                        },
-                        valueRange = 20f..36f
-                    )
-
-                    Text(
-                        text = String.format(Locale.UK, "Max humidity alert: %.0f%% RH", cfg.alertHumidityMaxPct),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFB0BEC5),
-                        fontSize = 11.sp
-                    )
-                    Slider(
-                        value = cfg.alertHumidityMaxPct,
-                        onValueChange = {
-                            onUpdateRoomConfig(room.channelId, cfg.copy(alertHumidityMaxPct = it))
-                        },
-                        valueRange = 45f..90f
-                    )
                 }
             }
         }
@@ -792,12 +879,47 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun ThresholdSliderRow(
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFCBD5E1)
+            )
+            Text(
+                text = valueText,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = CoolCyan
+            )
+        }
+        Slider(
+            value = value.coerceIn(valueRange.start, valueRange.endInclusive),
+            onValueChange = onValueChange,
+            valueRange = valueRange
+        )
+    }
+}
+
+@Composable
 private fun CustomNotificationCriteriaCard(
     settings: AppSettings,
     snapshot: HomeAtmosphereSnapshot,
     onUpdateSettings: (AppSettings) -> Unit,
     onTestNotifications: () -> Unit
 ) {
+    var showAddRuleForm by remember { mutableStateOf(false) }
     var draftChannelId by remember {
         mutableStateOf(snapshot.rooms.firstOrNull()?.channelId ?: "gateway")
     }
@@ -812,6 +934,7 @@ private fun CustomNotificationCriteriaCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Header + Master Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -829,18 +952,19 @@ private fun CustomNotificationCriteriaCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = "App notifications on met criteria",
+                            text = "Notifications and custom rules",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
                         )
                         Text(
-                            text = "Fires Android alerts during live polling and background syncs when criteria are met",
+                            text = "Alerts on your Pixel 10 and Pixel Watch (60 min cooldown per rule).",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFB0BEC5)
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(12.dp))
                 Switch(
                     checked = settings.notificationsEnabled,
                     onCheckedChange = {
@@ -851,274 +975,361 @@ private fun CustomNotificationCriteriaCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Button(
+            OutlinedButton(
                 onClick = onTestNotifications,
-                colors = ButtonDefaults.buttonColors(containerColor = CoolCyan),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Test active criteria now",
-                    color = Color(0xFF061624),
-                    fontWeight = FontWeight.Bold
+                    text = "Send test notification now",
+                    color = CoolCyan,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Section 1: Smart environmental triggers in clean mini-cards
             Text(
-                text = "Smart environmental criteria",
+                text = "Smart environmental triggers",
                 style = MaterialTheme.typography.labelMedium,
                 color = ThermalAmber,
                 fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            SmartCriterionToggleRow(
-                title = "High mould and condensation risk (ASHRAE 160)",
-                subtitle = "Notifies when indoor dew point approaches room temperature (<3.2°C spread or ≥70% RH)",
-                checked = settings.mouldRiskNotifications,
-                onCheckedChange = { onUpdateSettings(settings.copy(mouldRiskNotifications = it)) }
-            )
-            SmartCriterionToggleRow(
-                title = "Smart window ventilation advice",
-                subtitle = "Notifies when a room is humid and outdoor air carries ≥1.2 g/m³ less water vapour",
-                checked = settings.ventilationAdviceNotifications,
-                onCheckedChange = { onUpdateSettings(settings.copy(ventilationAdviceNotifications = it)) }
-            )
-            SmartCriterionToggleRow(
-                title = "Rapid barometric pressure drop",
-                subtitle = "Notifies when GW1200 pressure falls by ≥2.0 hPa over 3 hours (approaching rain/storm front)",
-                checked = settings.pressureDropNotifications,
-                onCheckedChange = { onUpdateSettings(settings.copy(pressureDropNotifications = it)) }
-            )
-            SmartCriterionToggleRow(
-                title = "Sensor low battery alert",
-                subtitle = "Notifies when any WH31 sensor channel reports low battery voltage",
-                checked = settings.lowBatteryNotifications,
-                onCheckedChange = { onUpdateSettings(settings.copy(lowBatteryNotifications = it)) }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmartCriterionToggleRow(
+                    title = "Mould and condensation risk",
+                    subtitle = "ASHRAE 160: dew point within 3.2°C of room temp or ≥70% RH",
+                    checked = settings.mouldRiskNotifications,
+                    onCheckedChange = { onUpdateSettings(settings.copy(mouldRiskNotifications = it)) }
+                )
+                SmartCriterionToggleRow(
+                    title = "Window ventilation advice",
+                    subtitle = "Alerts when outdoor air is drier than a humid indoor room",
+                    checked = settings.ventilationAdviceNotifications,
+                    onCheckedChange = { onUpdateSettings(settings.copy(ventilationAdviceNotifications = it)) }
+                )
+                SmartCriterionToggleRow(
+                    title = "Barometric storm drop",
+                    subtitle = "Alerts when pressure falls by ≥2.0 hPa over 3 hours",
+                    checked = settings.pressureDropNotifications,
+                    onCheckedChange = { onUpdateSettings(settings.copy(pressureDropNotifications = it)) }
+                )
+                SmartCriterionToggleRow(
+                    title = "Low sensor battery",
+                    subtitle = "Alerts when any WH31 sensor channel reports low voltage",
+                    checked = settings.lowBatteryNotifications,
+                    onCheckedChange = { onUpdateSettings(settings.copy(lowBatteryNotifications = it)) }
+                )
+            }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color = Color.White.copy(alpha = 0.08f)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            Text(
-                text = "Custom user notification rules (${settings.customCriteria.size})",
-                style = MaterialTheme.typography.labelMedium,
-                color = CoolCyan,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-
-            settings.customCriteria.forEach { crit ->
-                val targetRoom = snapshot.rooms.firstOrNull { it.channelId == crit.channelId }
-                    ?: snapshot.rooms.firstOrNull()
-                val actualVal = if (targetRoom != null) {
-                    when (crit.metric) {
-                        NotificationMetric.TEMPERATURE -> targetRoom.temperatureC
-                        NotificationMetric.HUMIDITY -> targetRoom.humidityPct
-                        NotificationMetric.DEW_POINT -> targetRoom.dewPointC
-                        NotificationMetric.PRESSURE -> targetRoom.relativePressureHpa ?: snapshot.pressureHpa ?: 1013.2f
-                        NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
+            // Section 2: Custom user rules header + Add button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Custom alert rules (${settings.customCriteria.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = CoolCyan,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Your own conditions on temperature, humidity, dew point, pressure, or comfort.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFB0BEC5),
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                AssistChip(
+                    onClick = { showAddRuleForm = !showAddRuleForm },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Add,
+                            contentDescription = "New rule",
+                            modifier = Modifier.size(16.dp),
+                            tint = ComfortEmerald
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = if (showAddRuleForm) "Close" else "New rule",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
-                } else null
-                val isMet = actualVal != null && crit.enabled && crit.operator.matches(actualVal, crit.threshold)
+                )
+            }
 
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Collapsible Add Rule Builder
+            if (showAddRuleForm) {
                 Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isMet) Color(0xFF2B1C28) else Color(0xFF142236)
-                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF102033)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(bottom = 12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Create custom alert rule",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "1. Room",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CoolCyan
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            snapshot.rooms.forEach { r ->
+                                val shortName = (settings.roomConfigs[r.channelId]?.customName ?: r.roomName)
+                                    .substringBefore(" (")
+                                FilterChip(
+                                    selected = draftChannelId == r.channelId,
+                                    onClick = { draftChannelId = r.channelId },
+                                    label = { Text(shortName, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "2. Metric and condition",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CoolCyan
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            NotificationMetric.entries.forEach { m ->
+                                FilterChip(
+                                    selected = draftMetric == m,
+                                    onClick = {
+                                        draftMetric = m
+                                        draftThreshold = when (m) {
+                                            NotificationMetric.TEMPERATURE -> 19.0f
+                                            NotificationMetric.HUMIDITY -> 65.0f
+                                            NotificationMetric.DEW_POINT -> 16.0f
+                                            NotificationMetric.PRESSURE -> 1002.0f
+                                            NotificationMetric.COMFORT_SCORE -> 65.0f
+                                        }
+                                    },
+                                    label = { Text(m.label, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${targetRoom?.roomName ?: crit.channelId.uppercase()} • ${crit.metric.label} ${crit.operator.symbol} ${
-                                        String.format(Locale.UK, "%.1f%s", crit.threshold, crit.metric.unitSuffix)
-                                    }",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isMet) Color(0xFFFF8A80) else Color.White
-                                )
-                                Text(
-                                    text = crit.customMessage,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFCBD5E1),
-                                    fontSize = 11.sp
-                                )
-                                if (actualVal != null) {
-                                    Text(
-                                        text = String.format(
-                                            Locale.UK,
-                                            "Live reading: %.1f%s (%s)",
-                                            actualVal,
-                                            crit.metric.unitSuffix,
-                                            if (isMet) "CRITERION MET" else "Within target"
-                                        ),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (isMet) ThermalAmber else ComfortEmerald,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                AssistChip(
-                                    onClick = {
-                                        val updatedList = settings.customCriteria.filterNot { it.id == crit.id }
-                                        onUpdateSettings(settings.copy(customCriteria = updatedList))
-                                    },
-                                    label = { Text("Remove", fontSize = 10.sp) }
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Switch(
-                                    checked = crit.enabled,
-                                    onCheckedChange = { enabled ->
-                                        val updatedList = settings.customCriteria.map {
-                                            if (it.id == crit.id) it.copy(enabled = enabled) else it
-                                        }
-                                        onUpdateSettings(settings.copy(customCriteria = updatedList))
-                                    }
+                            ComparisonOperator.entries.forEach { op ->
+                                FilterChip(
+                                    selected = draftOperator == op,
+                                    onClick = { draftOperator = op },
+                                    label = { Text("${op.label} (${op.symbol})", fontSize = 11.sp) }
                                 )
                             }
+                        }
+
+                        val valueRange = when (draftMetric) {
+                            NotificationMetric.TEMPERATURE -> -5f..38f
+                            NotificationMetric.HUMIDITY -> 20f..95f
+                            NotificationMetric.DEW_POINT -> 0f..26f
+                            NotificationMetric.PRESSURE -> 980f..1040f
+                            NotificationMetric.COMFORT_SCORE -> 20f..95f
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        ThresholdSliderRow(
+                            label = "3. Threshold (${draftMetric.label} ${draftOperator.symbol})",
+                            valueText = String.format(
+                                Locale.UK,
+                                "%s %.1f%s",
+                                draftOperator.symbol,
+                                draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
+                                draftMetric.unitSuffix
+                            ),
+                            value = draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
+                            valueRange = valueRange,
+                            onValueChange = { draftThreshold = it }
+                        )
+
+                        OutlinedTextField(
+                            value = draftMessage,
+                            onValueChange = { draftMessage = it },
+                            label = { Text("4. Notification message") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                val newRule = CustomAlertCriterion(
+                                    id = "crit_${System.currentTimeMillis()}",
+                                    channelId = draftChannelId,
+                                    metric = draftMetric,
+                                    operator = draftOperator,
+                                    threshold = draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
+                                    customMessage = draftMessage.ifBlank { "Custom alert criterion met" },
+                                    enabled = true
+                                )
+                                onUpdateSettings(
+                                    settings.copy(customCriteria = settings.customCriteria + newRule)
+                                )
+                                showAddRuleForm = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ComfortEmerald),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Save custom rule",
+                                color = Color(0xFF06211E),
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
             }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color = Color.White.copy(alpha = 0.08f)
-            )
+            // Active custom rule cards (clean two-row layout)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                settings.customCriteria.forEach { crit ->
+                    val targetRoom = snapshot.rooms.firstOrNull { it.channelId == crit.channelId }
+                        ?: snapshot.rooms.firstOrNull()
+                    val roomLabel = (settings.roomConfigs[crit.channelId]?.customName
+                        ?: targetRoom?.roomName
+                        ?: crit.channelId.uppercase()).substringBefore(" (")
+                    val actualVal = if (targetRoom != null) {
+                        when (crit.metric) {
+                            NotificationMetric.TEMPERATURE -> targetRoom.temperatureC
+                            NotificationMetric.HUMIDITY -> targetRoom.humidityPct
+                            NotificationMetric.DEW_POINT -> targetRoom.dewPointC
+                            NotificationMetric.PRESSURE -> targetRoom.relativePressureHpa ?: snapshot.pressureHpa ?: 1013.2f
+                            NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
+                        }
+                    } else null
+                    val isMet = actualVal != null && crit.enabled && crit.operator.matches(actualVal, crit.threshold)
 
-            Text(
-                text = "Add new notification criterion",
-                style = MaterialTheme.typography.labelMedium,
-                color = ThermalAmber,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // 1. Select Room
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                snapshot.rooms.forEach { r ->
-                    FilterChip(
-                        selected = draftChannelId == r.channelId,
-                        onClick = { draftChannelId = r.channelId },
-                        label = { Text(r.roomName.substringBefore(" ("), fontSize = 11.sp) }
-                    )
-                }
-            }
-
-            // 2. Select Metric
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                NotificationMetric.entries.forEach { m ->
-                    FilterChip(
-                        selected = draftMetric == m,
-                        onClick = {
-                            draftMetric = m
-                            draftThreshold = when (m) {
-                                NotificationMetric.TEMPERATURE -> 19.0f
-                                NotificationMetric.HUMIDITY -> 65.0f
-                                NotificationMetric.DEW_POINT -> 16.0f
-                                NotificationMetric.PRESSURE -> 1002.0f
-                                NotificationMetric.COMFORT_SCORE -> 65.0f
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isMet) Color(0xFF2B1C28) else Color(0xFF142236)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            // Top row: Room + Rule expression on left, Switch + Delete icon on right
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = roomLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = CoolCyan,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = String.format(
+                                            Locale.UK,
+                                            "%s %s %.1f%s",
+                                            crit.metric.label,
+                                            crit.operator.symbol,
+                                            crit.threshold,
+                                            crit.metric.unitSuffix
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isMet) Color(0xFFFF8A80) else Color.White
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(
+                                        checked = crit.enabled,
+                                        onCheckedChange = { enabled ->
+                                            val updatedList = settings.customCriteria.map {
+                                                if (it.id == crit.id) it.copy(enabled = enabled) else it
+                                            }
+                                            onUpdateSettings(settings.copy(customCriteria = updatedList))
+                                        }
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val updatedList = settings.customCriteria.filterNot { it.id == crit.id }
+                                            onUpdateSettings(settings.copy(customCriteria = updatedList))
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.DeleteOutline,
+                                            contentDescription = "Delete rule",
+                                            tint = Color(0xFF94A3B8)
+                                        )
+                                    }
+                                }
                             }
-                        },
-                        label = { Text(m.label, fontSize = 11.sp) }
-                    )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Bottom row: Message + live status badge
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = crit.customMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (actualVal != null) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = String.format(
+                                            Locale.UK,
+                                            "Now %.1f%s • %s",
+                                            actualVal,
+                                            crit.metric.unitSuffix,
+                                            if (isMet) "Triggered" else "OK"
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isMet) ThermalAmber else ComfortEmerald,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-
-            // 3. Select Comparison Operator (< or >)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ComparisonOperator.entries.forEach { op ->
-                    FilterChip(
-                        selected = draftOperator == op,
-                        onClick = { draftOperator = op },
-                        label = { Text("${op.label} (${op.symbol})", fontSize = 11.sp) }
-                    )
-                }
-            }
-
-            val valueRange = when (draftMetric) {
-                NotificationMetric.TEMPERATURE -> -5f..38f
-                NotificationMetric.HUMIDITY -> 20f..95f
-                NotificationMetric.DEW_POINT -> 0f..26f
-                NotificationMetric.PRESSURE -> 980f..1040f
-                NotificationMetric.COMFORT_SCORE -> 20f..95f
-            }
-
-            Text(
-                text = String.format(
-                    Locale.UK,
-                    "Criterion threshold: %s %.1f%s",
-                    draftOperator.symbol,
-                    draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
-                    draftMetric.unitSuffix
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White
-            )
-            Slider(
-                value = draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
-                onValueChange = { draftThreshold = it },
-                valueRange = valueRange
-            )
-
-            OutlinedTextField(
-                value = draftMessage,
-                onValueChange = { draftMessage = it },
-                label = { Text("Custom notification message") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = {
-                    val newRule = CustomAlertCriterion(
-                        id = "crit_${System.currentTimeMillis()}",
-                        channelId = draftChannelId,
-                        metric = draftMetric,
-                        operator = draftOperator,
-                        threshold = draftThreshold.coerceIn(valueRange.start, valueRange.endInclusive),
-                        customMessage = draftMessage.ifBlank { "Custom alert criterion met" },
-                        enabled = true
-                    )
-                    onUpdateSettings(
-                        settings.copy(customCriteria = settings.customCriteria + newRule)
-                    )
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = ComfortEmerald),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Add notification criterion",
-                    color = Color(0xFF06211E),
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }
@@ -1131,27 +1342,35 @@ private fun SmartCriterionToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF142236)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFB0BEC5),
-                fontSize = 11.sp
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB0BEC5),
+                    fontSize = 11.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
