@@ -95,7 +95,7 @@ fun SettingsScreen(
     onCheckOtaUpdate: () -> Unit,
     onTestNotifications: () -> Unit,
     onUpdateSettings: (AppSettings) -> Unit,
-    onUpdateRoomConfig: (String, RoomConfig) -> Unit,
+    onUpdateRoomConfig: (String, RoomConfig, Boolean) -> Unit,
     onScanSubnet: () -> Unit,
     onTestConnection: () -> Unit,
     modifier: Modifier = Modifier
@@ -604,14 +604,18 @@ fun SettingsScreen(
 
                 if (selectedRoom != null) {
                     Spacer(modifier = Modifier.height(14.dp))
-                    val cfg = settings.roomConfigs[selectedRoom.channelId] ?: RoomConfig(
+                    val savedCfg = settings.roomConfigs[selectedRoom.channelId] ?: RoomConfig(
                         channelId = selectedRoom.channelId,
                         customName = selectedRoom.roomName,
                         archetype = selectedRoom.archetype
                     )
-                    var nameDraft by remember(selectedRoom.channelId, cfg.customName) {
-                        mutableStateOf(cfg.customName)
+                    var draftCfg by remember(selectedRoom.channelId, savedCfg) {
+                        mutableStateOf(savedCfg)
                     }
+                    var justSaved by remember(selectedRoom.channelId) {
+                        mutableStateOf(false)
+                    }
+                    val hasUnsavedChanges = draftCfg != savedCfg
 
                     Text(
                         text = "Hardware channel: ${selectedRoom.hardwareLabel} (${selectedRoom.channelId.uppercase()})",
@@ -621,10 +625,10 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     OutlinedTextField(
-                        value = nameDraft,
+                        value = draftCfg.customName,
                         onValueChange = {
-                            nameDraft = it
-                            onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(customName = it))
+                            draftCfg = draftCfg.copy(customName = it)
+                            justSaved = false
                         },
                         label = { Text("Room display name") },
                         singleLine = true,
@@ -648,17 +652,15 @@ fun SettingsScreen(
                     ) {
                         RoomArchetype.entries.forEach { arch ->
                             FilterChip(
-                                selected = cfg.archetype == arch,
+                                selected = draftCfg.archetype == arch,
                                 onClick = {
-                                    onUpdateRoomConfig(
-                                        selectedRoom.channelId,
-                                        cfg.copy(
-                                            archetype = arch,
-                                            alertTempMinC = arch.scientificAlertTempMinC,
-                                            alertTempMaxC = arch.scientificAlertTempMaxC,
-                                            alertHumidityMaxPct = arch.scientificAlertHumidityMaxPct
-                                        )
+                                    draftCfg = draftCfg.copy(
+                                        archetype = arch,
+                                        alertTempMinC = arch.scientificAlertTempMinC,
+                                        alertTempMaxC = arch.scientificAlertTempMaxC,
+                                        alertHumidityMaxPct = arch.scientificAlertHumidityMaxPct
                                     )
+                                    justSaved = false
                                 },
                                 label = { Text(arch.title, fontSize = 11.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
@@ -691,29 +693,30 @@ fun SettingsScreen(
                                         color = Color.White
                                     )
                                     Text(
-                                        text = cfg.archetype.standardCitation,
+                                        text = draftCfg.archetype.standardCitation,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = ThermalAmber
                                     )
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Switch(
-                                    checked = cfg.alertsEnabled,
+                                    checked = draftCfg.alertsEnabled,
                                     onCheckedChange = {
-                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertsEnabled = it))
+                                        draftCfg = draftCfg.copy(alertsEnabled = it)
+                                        justSaved = false
                                     }
                                 )
                             }
 
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = cfg.archetype.standardRationale,
+                                text = draftCfg.archetype.standardRationale,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFFB0BEC5),
                                 fontSize = 11.sp
                             )
 
-                            if (cfg.alertsEnabled) {
+                            if (draftCfg.alertsEnabled) {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -721,11 +724,12 @@ fun SettingsScreen(
                                 // Slider 1: Min Temperature
                                 ThresholdSliderRow(
                                     label = "Minimum temperature",
-                                    valueText = String.format(Locale.UK, "%.1f°C", cfg.alertTempMinC),
-                                    value = cfg.alertTempMinC,
+                                    valueText = String.format(Locale.UK, "%.1f°C", draftCfg.alertTempMinC),
+                                    value = draftCfg.alertTempMinC,
                                     valueRange = 0f..24f,
                                     onValueChange = {
-                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertTempMinC = it))
+                                        draftCfg = draftCfg.copy(alertTempMinC = it)
+                                        justSaved = false
                                     }
                                 )
 
@@ -734,11 +738,12 @@ fun SettingsScreen(
                                 // Slider 2: Max Temperature
                                 ThresholdSliderRow(
                                     label = "Maximum temperature",
-                                    valueText = String.format(Locale.UK, "%.1f°C", cfg.alertTempMaxC),
-                                    value = cfg.alertTempMaxC,
+                                    valueText = String.format(Locale.UK, "%.1f°C", draftCfg.alertTempMaxC),
+                                    value = draftCfg.alertTempMaxC,
                                     valueRange = 20f..36f,
                                     onValueChange = {
-                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertTempMaxC = it))
+                                        draftCfg = draftCfg.copy(alertTempMaxC = it)
+                                        justSaved = false
                                     }
                                 )
 
@@ -747,25 +752,24 @@ fun SettingsScreen(
                                 // Slider 3: Max Humidity
                                 ThresholdSliderRow(
                                     label = "Maximum humidity",
-                                    valueText = String.format(Locale.UK, "%.0f%% RH", cfg.alertHumidityMaxPct),
-                                    value = cfg.alertHumidityMaxPct,
+                                    valueText = String.format(Locale.UK, "%.0f%% RH", draftCfg.alertHumidityMaxPct),
+                                    value = draftCfg.alertHumidityMaxPct,
                                     valueRange = 45f..90f,
                                     onValueChange = {
-                                        onUpdateRoomConfig(selectedRoom.channelId, cfg.copy(alertHumidityMaxPct = it))
+                                        draftCfg = draftCfg.copy(alertHumidityMaxPct = it)
+                                        justSaved = false
                                     }
                                 )
 
                                 Spacer(modifier = Modifier.height(6.dp))
                                 OutlinedButton(
                                     onClick = {
-                                        onUpdateRoomConfig(
-                                            selectedRoom.channelId,
-                                            cfg.copy(
-                                                alertTempMinC = cfg.archetype.scientificAlertTempMinC,
-                                                alertTempMaxC = cfg.archetype.scientificAlertTempMaxC,
-                                                alertHumidityMaxPct = cfg.archetype.scientificAlertHumidityMaxPct
-                                            )
+                                        draftCfg = draftCfg.copy(
+                                            alertTempMinC = draftCfg.archetype.scientificAlertTempMinC,
+                                            alertTempMaxC = draftCfg.archetype.scientificAlertTempMaxC,
+                                            alertHumidityMaxPct = draftCfg.archetype.scientificAlertHumidityMaxPct
                                         )
+                                        justSaved = false
                                     },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -780,15 +784,37 @@ fun SettingsScreen(
                                         text = String.format(
                                             Locale.UK,
                                             "Reset to %s standard (%.0f–%.0f°C, ≤%.0f%%)",
-                                            cfg.archetype.title.lowercase(Locale.UK),
-                                            cfg.archetype.scientificAlertTempMinC,
-                                            cfg.archetype.scientificAlertTempMaxC,
-                                            cfg.archetype.scientificAlertHumidityMaxPct
+                                            draftCfg.archetype.title.lowercase(Locale.UK),
+                                            draftCfg.archetype.scientificAlertTempMinC,
+                                            draftCfg.archetype.scientificAlertTempMaxC,
+                                            draftCfg.archetype.scientificAlertHumidityMaxPct
                                         ),
                                         fontSize = 11.sp,
                                         color = CoolCyan
                                     )
                                 }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    onUpdateRoomConfig(selectedRoom.channelId, draftCfg, true)
+                                    justSaved = true
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (hasUnsavedChanges) ComfortEmerald else CoolCyan
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = when {
+                                        hasUnsavedChanges -> "Save room settings and thresholds"
+                                        justSaved -> "Saved room thresholds ✓"
+                                        else -> "Save room settings and thresholds"
+                                    },
+                                    color = Color(0xFF06211E),
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }

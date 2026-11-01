@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
                             wholeHomeOverview = wholeHomeOverview,
                             onSelectRoomIndex = viewModel::selectRoomIndex,
                             onToggleWholeHome = viewModel::toggleWholeHomeOverview,
-                            onUpdateRoomConfig = viewModel::updateRoomConfig,
+                            onUpdateRoomConfig = { ch, cfg -> viewModel.updateRoomConfig(ch, cfg, false) },
                             onUpdateSimParams = viewModel::updateSimulationParams,
                             onRefresh = viewModel::refreshNow,
                             modifier = Modifier.padding(innerPadding)

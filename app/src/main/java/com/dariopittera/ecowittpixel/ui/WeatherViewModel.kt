@@ -203,10 +203,30 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateRoomConfig(channelId: String, updatedConfig: RoomConfig) {
+    fun updateRoomConfig(
+        channelId: String,
+        updatedConfig: RoomConfig,
+        showSaveConfirmation: Boolean = false
+    ) {
         val currentMap = _settings.value.roomConfigs.toMutableMap()
         currentMap[channelId] = updatedConfig
-        updateSettings(_settings.value.copy(roomConfigs = currentMap))
+        val updatedSettings = _settings.value.copy(roomConfigs = currentMap)
+        updateSettings(updatedSettings)
+        if (showSaveConfirmation) {
+            _statusBanner.value = String.format(
+                java.util.Locale.UK,
+                "Saved settings and thresholds for %s (%.1f–%.1f°C, ≤%.0f%% RH) and synced to Pixel Watch",
+                updatedConfig.customName,
+                updatedConfig.alertTempMinC,
+                updatedConfig.alertTempMaxC,
+                updatedConfig.alertHumidityMaxPct
+            )
+            if (updatedSettings.notificationsEnabled) {
+                viewModelScope.launch {
+                    WeatherSyncWorker.evaluateAndNotify(getApplication(), _snapshot.value, updatedSettings)
+                }
+            }
+        }
     }
 
     fun updateSimulationParams(newSim: SimulationParameters) {
