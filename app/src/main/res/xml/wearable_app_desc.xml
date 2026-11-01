@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <wearableApp package="com.dariopittera.ecowittpixel">
-    <versionCode>3009</versionCode>
-    <versionName>9.0.0</versionName>
+    <versionCode>3010</versionCode>
+    <versionName>10.0.0</versionName>
     <rawPathResId>wearos_app</rawPathResId>
 </wearableApp>

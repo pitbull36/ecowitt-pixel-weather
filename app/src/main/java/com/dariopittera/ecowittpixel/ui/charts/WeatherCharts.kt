@@ -2,8 +2,12 @@ package com.dariopittera.ecowittpixel.ui.charts
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +27,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -37,6 +45,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -336,133 +345,497 @@ fun PsychrometricComfortScatterChart(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
+    val haptic = LocalHapticFeedback.current
+
+    var zoomScale by remember { mutableFloatStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var focusedRoomIdx by remember { mutableStateOf<Int?>(null) }
+
+    fun clampPan(pan: Offset, scale: Float, plotW: Float, plotH: Float): Offset {
+        if (scale <= 1.01f) return Offset.Zero
+        val maxPanX = (plotW * (scale - 1f)) / 2f
+        val maxPanY = (plotH * (scale - 1f)) / 2f
+        return Offset(
+            pan.x.coerceIn(-maxPanX, maxPanX),
+            pan.y.coerceIn(-maxPanY, maxPanY)
+        )
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = "Psychrometric comfort matrix (ASHRAE 55 zone)",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "Plots each sensor's 24-hour trail and current position against the ideal indoor comfort zone and the mould threshold.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB0BEC5)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Psychrometric comfort matrix (ASHRAE 55)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Pinch or double-tap to zoom in, drag to pan, or tap a room pill below to focus.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB0BEC5)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Interactive Zoom Control Pill (- | 1.0x | + | Reset)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF14243A))
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val nextScale = (zoomScale / 1.4f).coerceIn(1f, 5f)
+                            zoomScale = nextScale
+                            if (nextScale <= 1.02f) {
+                                zoomScale = 1f
+                                panOffset = Offset.Zero
+                                focusedRoomIdx = null
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                ) {
+                    Text("−", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (zoomScale > 1.05f) Color(0xFF1A3A38) else Color(0xFF14243A))
+                        .border(
+                            1.dp,
+                            if (zoomScale > 1.05f) ComfortEmerald else Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable {
+                            zoomScale = 1f
+                            panOffset = Offset.Zero
+                            focusedRoomIdx = null
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = if (zoomScale > 1.05f) String.format(Locale.UK, "%.1fx ↺", zoomScale) else "1.0x",
+                        color = if (zoomScale > 1.05f) ComfortEmerald else Color(0xFF90CAF9),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF14243A))
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            zoomScale = (zoomScale * 1.4f).coerceIn(1f, 5f)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                ) {
+                    Text("+", color = CoolCyan, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Interactive Room Legend Strip (tap any room to focus/highlight its trail, or All rooms)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val allSelected = focusedRoomIdx == null
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (allSelected) Color(0xFF1F3654) else Color(0xFF0E1828))
+                    .border(
+                        width = 1.dp,
+                        color = if (allSelected) CoolCyan else Color.White.copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .clickable {
+                        focusedRoomIdx = null
+                        zoomScale = 1f
+                        panOffset = Offset.Zero
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "All rooms",
+                    color = if (allSelected) Color.White else Color(0xFF94A3B8),
+                    fontWeight = if (allSelected) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 11.sp
+                )
+            }
+
+            rooms.forEachIndexed { idx, room ->
+                val color = SERIES_COLORS[idx % SERIES_COLORS.size]
+                val isSelected = focusedRoomIdx == idx
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isSelected) Color(0xFF1C314D) else Color(0xFF0E1828))
+                        .border(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) color else Color.White.copy(alpha = 0.10f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            if (focusedRoomIdx == idx) {
+                                focusedRoomIdx = null
+                                zoomScale = 1f
+                                panOffset = Offset.Zero
+                            } else {
+                                focusedRoomIdx = idx
+                                zoomScale = 2.4f
+                                // Center pan on this room's coordinates
+                                val nx = ((room.temperatureC - 6f) / (32f - 6f)).coerceIn(0f, 1f)
+                                val ny = ((room.humidityPct - 20f) / (95f - 20f)).coerceIn(0f, 1f)
+                                // Normalized offset from center (0.5, 0.5)
+                                val relX = 0.5f - nx
+                                val relY = ny - 0.5f
+                                panOffset = Offset(relX * 260f * 2.4f, relY * 190f * 2.4f)
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${room.roomName.substringBefore(" (")}: ${tempUnit.format(room.temperatureC)} • ${room.humidityPct.toInt()}%",
+                            color = Color.White,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(210.dp)
+                .height(255.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF0E1828))
-        ) {
-            val leftPad = 42f
-            val rightPad = 18f
-            val topPad = 18f
-            val bottomPad = 28f
-            val plotW = size.width - leftPad - rightPad
-            val plotH = size.height - topPad - bottomPad
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { tapOffset ->
+                            val leftPad = 44f
+                            val rightPad = 16f
+                            val topPad = 16f
+                            val bottomPad = 28f
+                            val plotW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                            val plotH = (size.height - topPad - bottomPad).coerceAtLeast(10f)
+                            val centerX = leftPad + plotW / 2f
+                            val centerY = topPad + plotH / 2f
+                            if (zoomScale > 2.2f) {
+                                zoomScale = 1f
+                                panOffset = Offset.Zero
+                                focusedRoomIdx = null
+                            } else {
+                                val nextScale = (zoomScale * 1.85f).coerceIn(1f, 4.5f)
+                                val ratio = nextScale / zoomScale
+                                val newPan = Offset(
+                                    x = (panOffset.x + (centerX - tapOffset.x) * (ratio - 1f)),
+                                    y = (panOffset.y + (centerY - tapOffset.y) * (ratio - 1f))
+                                )
+                                zoomScale = nextScale
+                                panOffset = clampPan(newPan, nextScale, plotW, plotH)
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        val leftPad = 44f
+                        val rightPad = 16f
+                        val topPad = 16f
+                        val bottomPad = 28f
+                        val plotW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+                        val plotH = (size.height - topPad - bottomPad).coerceAtLeast(10f)
+                        val centerX = leftPad + plotW / 2f
+                        val centerY = topPad + plotH / 2f
 
-            val minTempC = 6f
-            val maxTempC = 32f
-            val minHum = 20f
-            val maxHum = 95f
+                        val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                        val scaleFactor = newScale / zoomScale
+                        val rawPan = if (newScale > 1.01f) {
+                            Offset(
+                                x = (panOffset.x - (centroid.x - centerX) * (scaleFactor - 1f)) + pan.x,
+                                y = (panOffset.y - (centroid.y - centerY) * (scaleFactor - 1f)) + pan.y
+                            )
+                        } else {
+                            Offset.Zero
+                        }
+                        zoomScale = newScale
+                        panOffset = clampPan(rawPan, newScale, plotW, plotH)
+                    }
+                }
+        ) {
+            val leftPad = 44f
+            val rightPad = 16f
+            val topPad = 16f
+            val bottomPad = 28f
+            val plotW = (size.width - leftPad - rightPad).coerceAtLeast(10f)
+            val plotH = (size.height - topPad - bottomPad).coerceAtLeast(10f)
+            val centerX = leftPad + plotW / 2f
+            val centerY = topPad + plotH / 2f
+
+            val baseMinTempC = 6f
+            val baseMaxTempC = 32f
+            val baseMinHum = 20f
+            val baseMaxHum = 95f
+
+            val safePan = clampPan(panOffset, zoomScale, plotW, plotH)
 
             fun mapPt(tempC: Float, humPct: Float): Offset {
-                val nx = ((tempC - minTempC) / (maxTempC - minTempC)).coerceIn(0f, 1f)
-                val ny = ((humPct - minHum) / (maxHum - minHum)).coerceIn(0f, 1f)
-                return Offset(leftPad + nx * plotW, topPad + (1f - ny) * plotH)
+                val nx = (tempC - baseMinTempC) / (baseMaxTempC - baseMinTempC)
+                val ny = (humPct - baseMinHum) / (baseMaxHum - baseMinHum)
+                val baseX = leftPad + nx * plotW
+                val baseY = topPad + (1f - ny) * plotH
+                val zoomedX = centerX + (baseX - centerX) * zoomScale + safePan.x
+                val zoomedY = centerY + (baseY - centerY) * zoomScale + safePan.y
+                return Offset(zoomedX, zoomedY)
             }
 
-            // Grid lines
+            fun screenXToTempC(screenX: Float): Float {
+                val baseX = centerX + (screenX - centerX - safePan.x) / zoomScale
+                val nx = ((baseX - leftPad) / plotW).coerceIn(0f, 1f)
+                return baseMinTempC + nx * (baseMaxTempC - baseMinTempC)
+            }
+
+            fun screenYToHumPct(screenY: Float): Float {
+                val baseY = centerY + (screenY - centerY - safePan.y) / zoomScale
+                val ny = (1f - (baseY - topPad) / plotH).coerceIn(0f, 1f)
+                return baseMinHum + ny * (baseMaxHum - baseMinHum)
+            }
+
+            // Dynamic Y-axis grid lines + humidity labels that adapt to zoom/pan
             for (i in 0..4) {
                 val frac = i / 4f
                 val y = topPad + plotH * (1f - frac)
-                val humVal = minHum + (maxHum - minHum) * frac
+                val humVal = screenYToHumPct(y)
                 drawLine(
-                    color = Color.White.copy(alpha = 0.06f),
+                    color = Color.White.copy(alpha = 0.07f),
                     start = Offset(leftPad, y),
                     end = Offset(size.width - rightPad, y),
                     strokeWidth = 1f
                 )
                 val lbl = textMeasurer.measure(
                     text = "${humVal.toInt()}%",
-                    style = TextStyle(color = Color(0xFF78909C), fontSize = 9.sp)
+                    style = TextStyle(color = Color(0xFF90A4AE), fontSize = 9.sp)
                 )
                 drawText(lbl, topLeft = Offset(6f, y - lbl.size.height / 2f))
             }
 
-            // Mould risk upper band (> 68% RH)
-            val mouldTopLeft = mapPt(minTempC, maxHum)
-            val mouldBottomRight = mapPt(maxTempC, 68f)
-            drawRect(
-                color = HumidViolet.copy(alpha = 0.14f),
-                topLeft = mouldTopLeft,
-                size = Size(mouldBottomRight.x - mouldTopLeft.x, mouldBottomRight.y - mouldTopLeft.y)
-            )
-
-            // ASHRAE 55 Optimal Comfort Polygon (18.5..24.2°C, 38..58% RH)
-            val c1 = mapPt(18.5f, 38f)
-            val c2 = mapPt(24.2f, 38f)
-            val c3 = mapPt(23.5f, 58f)
-            val c4 = mapPt(18.0f, 58f)
-            val comfortPoly = Path().apply {
-                moveTo(c1.x, c1.y)
-                lineTo(c2.x, c2.y)
-                lineTo(c3.x, c3.y)
-                lineTo(c4.x, c4.y)
-                close()
-            }
-            drawPath(comfortPoly, color = ComfortEmerald.copy(alpha = 0.24f))
-            drawPath(comfortPoly, color = ComfortEmerald, style = Stroke(width = 2.2f))
-
-            val zoneLabel = textMeasurer.measure(
-                text = "Optimal comfort zone",
-                style = TextStyle(color = ComfortEmerald, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-            )
-            drawText(zoneLabel, topLeft = Offset(c4.x + 6f, c4.y + 6f))
-
-            // Draw 24h trails & live position for each room
-            rooms.forEachIndexed { idx, room ->
-                val color = SERIES_COLORS[idx % SERIES_COLORS.size]
-                val recent24h = room.history.takeLast(24)
-                if (recent24h.size >= 2) {
-                    val trailPath = Path()
-                    recent24h.forEachIndexed { ptIdx, pt ->
-                        val p = mapPt(pt.temperatureC, pt.humidityPct)
-                        if (ptIdx == 0) trailPath.moveTo(p.x, p.y) else trailPath.lineTo(p.x, p.y)
-                    }
-                    drawPath(
-                        path = trailPath,
-                        color = color.copy(alpha = 0.42f),
-                        style = Stroke(width = 2.5f, cap = StrokeCap.Round)
-                    )
-                }
-
-                val livePos = mapPt(room.temperatureC, room.humidityPct)
-                drawCircle(color = color.copy(alpha = 0.35f), radius = 13f, center = livePos)
-                drawCircle(color = color, radius = 6.5f, center = livePos)
-
-                val tag = textMeasurer.measure(
-                    text = room.roomName.substringBefore(" ("),
-                    style = TextStyle(color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            // Dynamic X-axis vertical grid lines + temperature labels that adapt to zoom/pan
+            for (i in 0..4) {
+                val frac = 0.08f + (i / 4f) * 0.84f
+                val x = leftPad + plotW * frac
+                val tempValC = screenXToTempC(x)
+                drawLine(
+                    color = Color.White.copy(alpha = 0.05f),
+                    start = Offset(x, topPad),
+                    end = Offset(x, topPad + plotH),
+                    strokeWidth = 1f
                 )
-                val tx = (livePos.x + 10f).coerceAtMost(size.width - tag.size.width - 10f)
-                val ty = (livePos.y - tag.size.height / 2f).coerceIn(8f, size.height - 24f)
-                drawText(tag, topLeft = Offset(tx, ty))
-            }
-
-            // X-axis temperature labels
-            for (tC in listOf(10f, 16f, 20f, 24f, 28f)) {
-                val p = mapPt(tC, minHum)
                 val lbl = textMeasurer.measure(
-                    text = tempUnit.format(tC, decimals = 0),
-                    style = TextStyle(color = Color(0xFF78909C), fontSize = 9.sp)
+                    text = tempUnit.format(tempValC, decimals = if (zoomScale >= 1.8f) 1 else 0),
+                    style = TextStyle(color = Color(0xFF90A4AE), fontSize = 9.sp)
                 )
-                drawText(lbl, topLeft = Offset(p.x - lbl.size.width / 2f, size.height - 18f))
+                drawText(lbl, topLeft = Offset(x - lbl.size.width / 2f, size.height - 19f))
+            }
+
+            // Clip inner plot canvas so zoomed shapes stay strictly inside the axes
+            clipRect(
+                left = leftPad,
+                top = topPad,
+                right = leftPad + plotW,
+                bottom = topPad + plotH
+            ) {
+                // Mould risk upper band (> 68% RH)
+                val mouldTopLeft = mapPt(baseMinTempC, baseMaxHum)
+                val mouldBottomRight = mapPt(baseMaxTempC, 68f)
+                drawRect(
+                    color = HumidViolet.copy(alpha = 0.16f),
+                    topLeft = mouldTopLeft,
+                    size = Size(
+                        (mouldBottomRight.x - mouldTopLeft.x).coerceAtLeast(0f),
+                        (mouldBottomRight.y - mouldTopLeft.y).coerceAtLeast(0f)
+                    )
+                )
+                drawLine(
+                    color = HumidViolet.copy(alpha = 0.55f),
+                    start = Offset(mouldTopLeft.x, mouldBottomRight.y),
+                    end = Offset(mouldBottomRight.x, mouldBottomRight.y),
+                    strokeWidth = 1.5f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+                )
+                val mouldLbl = textMeasurer.measure(
+                    text = "Mould risk (>68% RH)",
+                    style = TextStyle(color = Color(0xFFD8B4FE), fontSize = 9.sp, fontWeight = FontWeight.Medium)
+                )
+                drawText(
+                    mouldLbl,
+                    topLeft = Offset(
+                        (mouldTopLeft.x + 8f).coerceAtLeast(leftPad + 6f),
+                        (mouldBottomRight.y - mouldLbl.size.height - 4f).coerceAtLeast(topPad + 4f)
+                    )
+                )
+
+                // ASHRAE 55 Optimal Comfort Polygon (18.5..24.2°C, 38..58% RH)
+                val c1 = mapPt(18.5f, 38f)
+                val c2 = mapPt(24.2f, 38f)
+                val c3 = mapPt(23.5f, 58f)
+                val c4 = mapPt(18.0f, 58f)
+                val comfortPoly = Path().apply {
+                    moveTo(c1.x, c1.y)
+                    lineTo(c2.x, c2.y)
+                    lineTo(c3.x, c3.y)
+                    lineTo(c4.x, c4.y)
+                    close()
+                }
+                drawPath(comfortPoly, color = ComfortEmerald.copy(alpha = 0.22f))
+                drawPath(comfortPoly, color = ComfortEmerald, style = Stroke(width = 2.4f))
+
+                val zoneLabel = textMeasurer.measure(
+                    text = "Optimal comfort zone",
+                    style = TextStyle(color = ComfortEmerald, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                )
+                drawText(
+                    zoneLabel,
+                    topLeft = Offset(
+                        (c4.x + 6f).coerceIn(leftPad + 4f, leftPad + plotW - zoneLabel.size.width - 4f),
+                        (c4.y + 6f).coerceIn(topPad + 4f, topPad + plotH - zoneLabel.size.height - 4f)
+                    )
+                )
+
+                // Track placed label boxes for smart collision avoidance
+                val placedLabelRects = mutableListOf<Rect>()
+
+                // Draw 24h trails & live position for each room
+                rooms.forEachIndexed { idx, room ->
+                    val isDimmed = focusedRoomIdx != null && focusedRoomIdx != idx
+                    val alphaMul = if (isDimmed) 0.25f else 1f
+                    val color = SERIES_COLORS[idx % SERIES_COLORS.size]
+                    val recent24h = room.history.takeLast(32)
+                    if (recent24h.size >= 2) {
+                        val trailPath = Path()
+                        recent24h.forEachIndexed { ptIdx, pt ->
+                            val p = mapPt(pt.temperatureC, pt.humidityPct)
+                            if (ptIdx == 0) trailPath.moveTo(p.x, p.y) else trailPath.lineTo(p.x, p.y)
+                            if (zoomScale >= 1.6f && !isDimmed && ptIdx % 2 == 0) {
+                                drawCircle(
+                                    color = color.copy(alpha = 0.55f),
+                                    radius = 3.2f,
+                                    center = p
+                                )
+                            }
+                        }
+                        drawPath(
+                            path = trailPath,
+                            color = color.copy(alpha = 0.52f * alphaMul),
+                            style = Stroke(width = if (focusedRoomIdx == idx) 3.8f else 2.6f, cap = StrokeCap.Round)
+                        )
+                    }
+
+                    val livePos = mapPt(room.temperatureC, room.humidityPct)
+                    drawCircle(color = color.copy(alpha = 0.32f * alphaMul), radius = 15f, center = livePos)
+                    drawCircle(color = Color(0xFF0E1828), radius = 8.5f, center = livePos)
+                    drawCircle(color = color.copy(alpha = alphaMul), radius = 6.5f, center = livePos)
+
+                    if (!isDimmed) {
+                        val shortName = room.roomName.substringBefore(" (")
+                        val labelText = if (zoomScale >= 1.6f) {
+                            "$shortName (${tempUnit.format(room.temperatureC)}, ${room.humidityPct.toInt()}%)"
+                        } else {
+                            shortName
+                        }
+                        val tag = textMeasurer.measure(
+                            text = labelText,
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        val padH = 6f
+                        val padV = 3f
+                        val boxW = tag.size.width + padH * 2f
+                        val boxH = tag.size.height + padV * 2f
+
+                        // Candidate positions around the dot (right, left, above, below)
+                        val candidates = listOf(
+                            Offset(livePos.x + 12f, livePos.y - boxH / 2f),
+                            Offset(livePos.x - boxW - 12f, livePos.y - boxH / 2f),
+                            Offset(livePos.x - boxW / 2f, livePos.y - boxH - 12f),
+                            Offset(livePos.x - boxW / 2f, livePos.y + 12f)
+                        )
+
+                        val chosenTopLeft = candidates
+                            .map { cand ->
+                                Offset(
+                                    cand.x.coerceIn(leftPad + 4f, leftPad + plotW - boxW - 4f),
+                                    cand.y.coerceIn(topPad + 4f, topPad + plotH - boxH - 4f)
+                                )
+                            }
+                            .firstOrNull { clamped ->
+                                val rect = Rect(clamped, Size(boxW, boxH))
+                                placedLabelRects.none { it.overlaps(rect) }
+                            } ?: Offset(
+                            (livePos.x + 12f).coerceIn(leftPad + 4f, leftPad + plotW - boxW - 4f),
+                            (livePos.y - boxH / 2f + idx * 18f).coerceIn(topPad + 4f, topPad + plotH - boxH - 4f)
+                        )
+
+                        val finalRect = Rect(chosenTopLeft, Size(boxW, boxH))
+                        placedLabelRects.add(finalRect)
+
+                        drawRoundRect(
+                            color = Color(0xCC0B1524),
+                            topLeft = chosenTopLeft,
+                            size = Size(boxW, boxH),
+                            cornerRadius = CornerRadius(8f, 8f)
+                        )
+                        drawRoundRect(
+                            color = color.copy(alpha = 0.7f),
+                            topLeft = chosenTopLeft,
+                            size = Size(boxW, boxH),
+                            cornerRadius = CornerRadius(8f, 8f),
+                            style = Stroke(width = 1.2f)
+                        )
+                        drawText(
+                            tag,
+                            topLeft = Offset(chosenTopLeft.x + padH, chosenTopLeft.y + padV)
+                        )
+                    }
+                }
             }
         }
     }
