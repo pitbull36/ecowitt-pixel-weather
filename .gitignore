@@ -9,6 +9,7 @@
 .cxx
 local.properties
 app/build/
+wear/build/
 .kotlin
 
 # Signing keystore & credentials (never commit private keys!)
