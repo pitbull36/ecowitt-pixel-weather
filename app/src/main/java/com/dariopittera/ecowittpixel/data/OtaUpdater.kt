@@ -140,8 +140,9 @@ class OtaUpdater(private val context: Context) {
 
             while (true) {
                 connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = true
+                    instanceFollowRedirects = false
                     requestMethod = "GET"
+                    setRequestProperty("Accept", "application/octet-stream, application/vnd.android.package-archive, */*")
                     setRequestProperty("User-Agent", "EcowittAtmosphere-Android")
                     connectTimeout = 15_000
                     readTimeout = 30_000
@@ -157,10 +158,10 @@ class OtaUpdater(private val context: Context) {
                 ) {
                     val location = connection.getHeaderField("Location")
                     connection.disconnect()
-                    if (location.isNullOrBlank() || ++redirects > 5) {
+                    if (location.isNullOrBlank() || ++redirects > 8) {
                         return@withContext Result.failure(Exception("Too many redirects downloading APK"))
                     }
-                    currentUrl = location
+                    currentUrl = URL(URL(currentUrl), location).toString()
                 } else {
                     break
                 }
@@ -177,7 +178,7 @@ class OtaUpdater(private val context: Context) {
 
             connection.inputStream.use { input ->
                 FileOutputStream(outputFile).use { output ->
-                    val buffer = ByteArray(8 * 1024)
+                    val buffer = ByteArray(16 * 1024)
                     var bytesRead: Int
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         output.write(buffer, 0, bytesRead)
@@ -187,8 +188,28 @@ class OtaUpdater(private val context: Context) {
                         }
                     }
                     output.flush()
+                    output.fd.sync()
                 }
             }
+            connection.disconnect()
+
+            if (outputFile.length() < 100_000L) {
+                return@withContext Result.failure(
+                    Exception("Downloaded APK is incomplete (${outputFile.length()} bytes)")
+                )
+            }
+            val magic = ByteArray(4)
+            outputFile.inputStream().use { it.read(magic) }
+            val isZipArchive = magic[0] == 0x50.toByte() &&
+                magic[1] == 0x4B.toByte() &&
+                magic[2] == 0x03.toByte() &&
+                magic[3] == 0x04.toByte()
+            if (!isZipArchive) {
+                return@withContext Result.failure(
+                    Exception("Downloaded file is not a valid APK archive")
+                )
+            }
+            outputFile.setReadable(true, false)
 
             onProgress(1f)
             Result.success(outputFile)
@@ -211,6 +232,7 @@ class OtaUpdater(private val context: Context) {
     }
 
     fun promptInstall(apkFile: File) {
+        apkFile.setReadable(true, false)
         val apkUri: Uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -218,8 +240,10 @@ class OtaUpdater(private val context: Context) {
         )
         val installIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         context.startActivity(installIntent)
     }

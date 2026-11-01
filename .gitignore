@@ -10,6 +10,7 @@
 local.properties
 app/build/
 wear/build/
+app/src/main/res/raw/wearos_app.apk
 .kotlin
 
 # Signing keystore & credentials (never commit private keys!)

@@ -7,15 +7,39 @@ export PATH="$HOME/.local/bin:$PATH"
 export JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk/jdk-21}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 
-VERSION_CODE="${1:-4}"
+VERSION_CODE="${1:-5}"
+WATCH_VERSION_CODE=$((3000 + VERSION_CODE))
 VERSION_NAME="${VERSION_CODE}.0.0"
 TAG_NAME="v${VERSION_NAME}"
 
-sed -i "s/versionCode = [0-9]\+/versionCode = ${VERSION_CODE}/g" app/build.gradle.kts wear/build.gradle.kts
+sed -i "s/versionCode = [0-9]\+/versionCode = ${VERSION_CODE}/g" app/build.gradle.kts
+sed -i "s/versionCode = [0-9]\+/versionCode = ${WATCH_VERSION_CODE}/g" wear/build.gradle.kts
 sed -i "s/versionName = \"[^\"]\+\"/versionName = \"${VERSION_NAME}\"/g" app/build.gradle.kts wear/build.gradle.kts
 
-echo "==> Building signed Release APKs (Pixel 10 phone + Pixel Watch) via Gradle..."
-./gradlew :app:assembleRelease :wear:assembleRelease
+cat > app/src/main/res/xml/wearable_app_desc.xml <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<wearableApp package="com.dariopittera.ecowittpixel">
+    <versionCode>${WATCH_VERSION_CODE}</versionCode>
+    <versionName>${VERSION_NAME}</versionName>
+    <rawPathResId>wearos_app</rawPathResId>
+</wearableApp>
+EOF
+
+echo "==> Step 1: Building signed Pixel Watch Release APK (versionCode=${WATCH_VERSION_CODE}) via Gradle..."
+./gradlew :wear:assembleRelease
+
+WATCH_APK_SOURCE="wear/build/outputs/apk/release/wear-release.apk"
+WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-pixel-watch-v${VERSION_NAME}.apk"
+cp "$WATCH_APK_SOURCE" "$WATCH_APK_DEST"
+echo "==> Built signed Pixel Watch APK: $WATCH_APK_DEST"
+
+# Embed the signed Pixel Watch APK inside the phone app's res/raw/wearos_app.apk so tools like
+# Wear Installer 2 can also extract and install the watch APK directly from the installed phone app.
+mkdir -p app/src/main/res/raw
+cp "$WATCH_APK_SOURCE" app/src/main/res/raw/wearos_app.apk
+
+echo "==> Step 2: Building signed Pixel 10 Phone Release APK (versionCode=${VERSION_CODE}) via Gradle..."
+./gradlew :app:assembleRelease
 
 # Phone APK starts with 'e' ('ecowitt-...') so it is ALWAYS assets[0] alphabetically on GitHub Releases,
 # ensuring phones on older builds (v2.0.0) always download the phone APK and never the watch APK.
@@ -23,12 +47,6 @@ PHONE_APK_SOURCE="app/build/outputs/apk/release/app-release.apk"
 PHONE_APK_DEST="app/build/outputs/apk/release/ecowitt-pixel-weather-v${VERSION_NAME}.apk"
 cp "$PHONE_APK_SOURCE" "$PHONE_APK_DEST"
 echo "==> Built signed Pixel 10 APK: $PHONE_APK_DEST"
-
-# Watch APK starts with 'w' ('wearos-...') so it sorts after the phone APK and is targeted exclusively by watch OTAs.
-WATCH_APK_SOURCE="wear/build/outputs/apk/release/wear-release.apk"
-WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-pixel-watch-v${VERSION_NAME}.apk"
-cp "$WATCH_APK_SOURCE" "$WATCH_APK_DEST"
-echo "==> Built signed Pixel Watch APK: $WATCH_APK_DEST"
 
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   echo "WARNING: GitHub CLI not authenticated; APKs are ready locally:"
@@ -67,7 +85,7 @@ else
   gh release create "$TAG_NAME" "$PHONE_APK_DEST" "$WATCH_APK_DEST" \
     --repo "$GITHUB_REPO" \
     --title "Release ${TAG_NAME} (Pixel 10 and Pixel Watch)" \
-    --notes "Signed Android and Wear OS APKs (versionCode=${VERSION_CODE}) for Google Pixel 10 and Pixel Watch with isolated phone vs watch OTA updates, live GW1200 and Cloud telemetry sync, synced custom room names, bluish humidity Tile palette, and 24h crown history scrubbing."
+    --notes "Signed Android and Wear OS APKs (versionCode=${VERSION_CODE}, watchVersionCode=${WATCH_VERSION_CODE}) for Google Pixel 10 and Pixel Watch with v1/v2/v3 signing, monotonic watch versionCode=${WATCH_VERSION_CODE}, embedded Wear OS sub-APK for Wear Installer 2, isolated phone vs watch OTA updates, live GW1200 and Cloud telemetry sync, synced custom room names, bluish humidity Tile palette, and 24h crown history scrubbing."
 fi
 
 RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/${TAG_NAME}"

@@ -20,9 +20,13 @@ android {
         applicationId = "com.dariopittera.ecowittpixel"
         minSdk = 31
         targetSdk = 35
-        versionCode = 4
-        versionName = "4.0.0"
+        versionCode = 5
+        versionName = "5.0.0"
         buildConfigField("String", "GITHUB_REPO", "\"pitbull36/ecowitt-pixel-weather\"")
+    }
+
+    androidResources {
+        noCompress += "apk"
     }
 
     signingConfigs {
@@ -40,6 +44,9 @@ android {
             keyPassword = keystoreProperties.getProperty("keyPassword")
                 ?: System.getenv("KEY_PASSWORD")
                 ?: "pixelota123"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

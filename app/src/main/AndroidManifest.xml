@@ -2,10 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Network access for GW1200 local LAN HTTP API and Ecowitt Cloud API -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Optional gyroscope/accelerometer for 3D diorama tilt parallax -->
@@ -77,6 +79,11 @@
         <receiver
             android:name=".worker.WatchActionReceiver"
             android:exported="false" />
+
+        <!-- Embedded Pixel Watch APK descriptor for Wear Installer 2 / companion watch installers -->
+        <meta-data
+            android:name="com.google.android.wearable.beta.app"
+            android:resource="@xml/wearable_app_desc" />
 
     </application>
 
