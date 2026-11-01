@@ -60,6 +60,24 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Wearable Data Layer listener for Pixel Watch sync requests -->
+        <service
+            android:name=".worker.PhoneWearListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/ecowitt" />
+            </intent-filter>
+        </service>
+
+        <!-- BroadcastReceiver to open a breached room directly on the Pixel Watch from phone notifications -->
+        <receiver
+            android:name=".worker.WatchActionReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

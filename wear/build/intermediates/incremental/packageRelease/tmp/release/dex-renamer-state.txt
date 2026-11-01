@@ -1,0 +1,13 @@
+#Sun Nov 01 11:48:55 UTC 2026
+base.0=/usr/local/google/home/dariopittera/ecowitt-pixel-weather/wear/build/intermediates/dex/release/mergeDexRelease/classes.dex
+base.1=/usr/local/google/home/dariopittera/ecowitt-pixel-weather/wear/build/intermediates/dex/release/mergeDexRelease/classes2.dex
+base.2=/usr/local/google/home/dariopittera/ecowitt-pixel-weather/wear/build/intermediates/dex/release/mergeDexRelease/classes3.dex
+base.3=/usr/local/google/home/dariopittera/ecowitt-pixel-weather/wear/build/intermediates/dex/release/mergeDexRelease/classes4.dex
+path.0=classes.dex
+path.1=classes2.dex
+path.2=classes3.dex
+path.3=classes4.dex
+renamed.0=classes.dex
+renamed.1=classes2.dex
+renamed.2=classes3.dex
+renamed.3=classes4.dex

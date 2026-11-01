@@ -466,3 +466,230 @@ object Psychrometrics {
         }
     }
 }
+
+enum class AlertSeverity(
+    val affectsTopTempArc: Boolean,
+    val affectsBottomHumidityArc: Boolean
+) {
+    HIGH_TEMP(affectsTopTempArc = true, affectsBottomHumidityArc = false),
+    LOW_TEMP(affectsTopTempArc = true, affectsBottomHumidityArc = false),
+    HIGH_HUMIDITY(affectsTopTempArc = false, affectsBottomHumidityArc = true),
+    LOW_HUMIDITY(affectsTopTempArc = false, affectsBottomHumidityArc = true),
+    MOULD_RISK(affectsTopTempArc = false, affectsBottomHumidityArc = true),
+    VENTILATION_ADVICE(affectsTopTempArc = false, affectsBottomHumidityArc = true),
+    PRESSURE_DROP(affectsTopTempArc = true, affectsBottomHumidityArc = true),
+    LOW_BATTERY(affectsTopTempArc = true, affectsBottomHumidityArc = false),
+    CUSTOM_CRITERION(affectsTopTempArc = true, affectsBottomHumidityArc = true)
+}
+
+data class RoomAlertBreach(
+    val key: String,
+    val notifId: Int,
+    val channelId: String,
+    val roomName: String,
+    val severity: AlertSeverity,
+    val shortBadge: String,
+    val title: String,
+    val body: String,
+    val affectsTopTempArc: Boolean = severity.affectsTopTempArc,
+    val affectsBottomHumidityArc: Boolean = severity.affectsBottomHumidityArc
+)
+
+object AlertEvaluator {
+    fun evaluateBreaches(
+        snapshot: HomeAtmosphereSnapshot,
+        settings: AppSettings
+    ): List<RoomAlertBreach> {
+        val breaches = mutableListOf<RoomAlertBreach>()
+        val outdoor = snapshot.outdoorRoom
+
+        snapshot.rooms.forEachIndexed { idx, room ->
+            val cfg = settings.roomConfigs[room.channelId]
+            val alertsOn = cfg?.alertsEnabled ?: true
+            if (alertsOn) {
+                val maxHum = cfg?.alertHumidityMaxPct ?: room.archetype.scientificAlertHumidityMaxPct
+                val minHum = cfg?.alertHumidityMinPct ?: 30.0f
+                val minTemp = cfg?.alertTempMinC ?: room.archetype.scientificAlertTempMinC
+                val maxTemp = cfg?.alertTempMaxC ?: room.archetype.scientificAlertTempMaxC
+                val citation = room.archetype.standardCitation
+
+                if (room.humidityPct >= maxHum) {
+                    val outdoorDryerMsg = if (outdoor != null && !room.archetype.isOutdoor &&
+                        room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3 > 1.0f
+                    ) {
+                        " Outdoor air is drier; open a window to ventilate."
+                    } else {
+                        " Consider running a dehumidifier or extractor fan."
+                    }
+                    breaches.add(
+                        RoomAlertBreach(
+                            key = "room_hum_high_${room.channelId}",
+                            notifId = 1000 + idx,
+                            channelId = room.channelId,
+                            roomName = room.roomName,
+                            severity = AlertSeverity.HIGH_HUMIDITY,
+                            shortBadge = "High RH ${room.humidityPct.toInt()}%",
+                            title = "${room.roomName}: high humidity (${room.humidityPct.toInt()}% RH)",
+                            body = "Exceeds ${maxHum.toInt()}% RH limit ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg"
+                        )
+                    )
+                }
+
+                if (!room.archetype.isOutdoor && room.humidityPct <= minHum) {
+                    breaches.add(
+                        RoomAlertBreach(
+                            key = "room_hum_low_${room.channelId}",
+                            notifId = 1100 + idx,
+                            channelId = room.channelId,
+                            roomName = room.roomName,
+                            severity = AlertSeverity.LOW_HUMIDITY,
+                            shortBadge = "Dry ${room.humidityPct.toInt()}%",
+                            title = "${room.roomName}: dry air (${room.humidityPct.toInt()}% RH)",
+                            body = "Below ${minHum.toInt()}% RH minimum comfort threshold ($citation)."
+                        )
+                    )
+                }
+
+                if (room.temperatureC >= maxTemp || room.temperatureC <= minTemp) {
+                    val isHigh = room.temperatureC >= maxTemp
+                    val reason = if (isHigh) {
+                        "above ${settings.tempUnit.format(maxTemp)} maximum limit"
+                    } else {
+                        "below ${settings.tempUnit.format(minTemp)} minimum limit"
+                    }
+                    breaches.add(
+                        RoomAlertBreach(
+                            key = "room_temp_${room.channelId}",
+                            notifId = 2000 + idx,
+                            channelId = room.channelId,
+                            roomName = room.roomName,
+                            severity = if (isHigh) AlertSeverity.HIGH_TEMP else AlertSeverity.LOW_TEMP,
+                            shortBadge = if (isHigh) "Warm ${settings.tempUnit.format(room.temperatureC)}" else "Cold ${settings.tempUnit.format(room.temperatureC)}",
+                            title = "${room.roomName}: temperature $reason",
+                            body = "Current ${settings.tempUnit.format(room.temperatureC)} is $reason ($citation)."
+                        )
+                    )
+                }
+            }
+
+            if (settings.mouldRiskNotifications && !room.archetype.isOutdoor && room.mouldRisk == MouldRiskLevel.HIGH) {
+                breaches.add(
+                    RoomAlertBreach(
+                        key = "mould_risk_${room.channelId}",
+                        notifId = 3000 + idx,
+                        channelId = room.channelId,
+                        roomName = room.roomName,
+                        severity = AlertSeverity.MOULD_RISK,
+                        shortBadge = "Mould risk",
+                        title = "${room.roomName}: high mould and condensation risk",
+                        body = "Dew point ${settings.tempUnit.format(room.dewPointC)} is close to room temperature (${settings.tempUnit.format(room.temperatureC)} at ${room.humidityPct.toInt()}% RH)."
+                    )
+                )
+            }
+
+            if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null && outdoor.channelId != room.channelId) {
+                val absDiff = room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
+                if (room.humidityPct >= room.archetype.idealHumidityMax && absDiff >= 1.2f) {
+                    breaches.add(
+                        RoomAlertBreach(
+                            key = "vent_advice_${room.channelId}",
+                            notifId = 4000 + idx,
+                            channelId = room.channelId,
+                            roomName = room.roomName,
+                            severity = AlertSeverity.VENTILATION_ADVICE,
+                            shortBadge = "Open window",
+                            title = "Open window in ${room.roomName}",
+                            body = String.format(
+                                java.util.Locale.UK,
+                                "Outdoor air carries %.1f g/m³ less moisture than indoors (%.0f%% RH) and will naturally dry the room.",
+                                absDiff,
+                                room.humidityPct
+                            )
+                        )
+                    )
+                }
+            }
+
+            if (settings.lowBatteryNotifications && room.batteryLow) {
+                breaches.add(
+                    RoomAlertBreach(
+                        key = "low_batt_${room.channelId}",
+                        notifId = 5000 + idx,
+                        channelId = room.channelId,
+                        roomName = room.roomName,
+                        severity = AlertSeverity.LOW_BATTERY,
+                        shortBadge = "Low battery",
+                        title = "${room.roomName}: sensor battery low",
+                        body = "Replace the battery in ${room.hardwareLabel} (${room.channelId.uppercase()}) to maintain continuous telemetry."
+                    )
+                )
+            }
+        }
+
+        val pTrend = snapshot.pressureTrend3hHpa ?: 0f
+        if (settings.pressureDropNotifications && pTrend <= -2.0f) {
+            val gwRoom = snapshot.primaryGatewayRoom
+            breaches.add(
+                RoomAlertBreach(
+                    key = "pressure_drop_gateway",
+                    notifId = 6000,
+                    channelId = gwRoom?.channelId ?: "gateway",
+                    roomName = gwRoom?.roomName ?: "GW1200",
+                    severity = AlertSeverity.PRESSURE_DROP,
+                    shortBadge = "Pressure drop",
+                    title = "Rapid barometric pressure drop (${String.format(java.util.Locale.UK, "%+.1f", pTrend)} hPa/3h)",
+                    body = snapshot.pressureForecastText
+                )
+            )
+        }
+
+        settings.customCriteria.forEachIndexed { cIdx, crit ->
+            if (!crit.enabled) return@forEachIndexed
+            val targetRoom = snapshot.rooms.firstOrNull { it.channelId == crit.channelId }
+                ?: snapshot.rooms.firstOrNull()
+                ?: return@forEachIndexed
+
+            val actualValue: Float = when (crit.metric) {
+                NotificationMetric.TEMPERATURE -> targetRoom.temperatureC
+                NotificationMetric.HUMIDITY -> targetRoom.humidityPct
+                NotificationMetric.DEW_POINT -> targetRoom.dewPointC
+                NotificationMetric.PRESSURE -> targetRoom.relativePressureHpa ?: snapshot.pressureHpa ?: 1013.2f
+                NotificationMetric.COMFORT_SCORE -> targetRoom.comfortScore.toFloat()
+            }
+
+            if (crit.operator.matches(actualValue, crit.threshold)) {
+                val formattedActual = String.format(java.util.Locale.UK, "%.1f%s", actualValue, crit.metric.unitSuffix)
+                val formattedTarget = String.format(java.util.Locale.UK, "%.1f%s", crit.threshold, crit.metric.unitSuffix)
+                val bodyText = if (crit.customMessage.isNotBlank()) {
+                    "${crit.customMessage} (current: $formattedActual, criterion: ${crit.operator.symbol} $formattedTarget)"
+                } else {
+                    "${targetRoom.roomName} ${crit.metric.label.lowercase()} is $formattedActual (${crit.operator.symbol} $formattedTarget)."
+                }
+                val affectsTop = crit.metric == NotificationMetric.TEMPERATURE || crit.metric == NotificationMetric.COMFORT_SCORE
+                val affectsBottom = crit.metric == NotificationMetric.HUMIDITY || crit.metric == NotificationMetric.DEW_POINT || crit.metric == NotificationMetric.COMFORT_SCORE
+                breaches.add(
+                    RoomAlertBreach(
+                        key = "custom_crit_${crit.id}",
+                        notifId = 7000 + cIdx,
+                        channelId = targetRoom.channelId,
+                        roomName = targetRoom.roomName,
+                        severity = AlertSeverity.CUSTOM_CRITERION,
+                        shortBadge = "${crit.metric.label} ${crit.operator.symbol}${formattedTarget}",
+                        title = "Criterion met: ${targetRoom.roomName} ${crit.metric.label.lowercase()} ${crit.operator.symbol} $formattedTarget",
+                        body = bodyText,
+                        affectsTopTempArc = affectsTop,
+                        affectsBottomHumidityArc = affectsBottom
+                    )
+                )
+            }
+        }
+
+        return breaches
+    }
+
+    fun breachesForRoom(
+        channelId: String,
+        snapshot: HomeAtmosphereSnapshot,
+        settings: AppSettings
+    ): List<RoomAlertBreach> = evaluateBreaches(snapshot, settings).filter { it.channelId == channelId }
+}

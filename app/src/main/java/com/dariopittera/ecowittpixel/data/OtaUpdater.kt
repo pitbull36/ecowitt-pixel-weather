@@ -24,7 +24,10 @@ data class ReleaseInfo(
 
 class OtaUpdater(private val context: Context) {
 
-    suspend fun checkForUpdate(githubRepo: String): Result<ReleaseInfo?> = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdate(
+        githubRepo: String,
+        preferWatchAsset: Boolean = false
+    ): Result<ReleaseInfo?> = withContext(Dispatchers.IO) {
         try {
             val apiUrl = "https://api.github.com/repos/$githubRepo/releases/latest"
             val connection = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
@@ -53,17 +56,38 @@ class OtaUpdater(private val context: Context) {
 
             var apkUrl: String? = null
             var apkSize: Long = 0L
+            var fallbackApkUrl: String? = null
+            var fallbackApkSize: Long = 0L
 
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
                     if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkUrl = asset.optString("browser_download_url", "")
-                        apkSize = asset.optLong("size", 0L)
-                        break
+                        val url = asset.optString("browser_download_url", "")
+                        val size = asset.optLong("size", 0L)
+                        if (fallbackApkUrl == null) {
+                            fallbackApkUrl = url
+                            fallbackApkSize = size
+                        }
+                        val isWatchApk = name.contains("watch", ignoreCase = true) ||
+                            name.contains("wear", ignoreCase = true)
+                        if (preferWatchAsset && isWatchApk) {
+                            apkUrl = url
+                            apkSize = size
+                            break
+                        } else if (!preferWatchAsset && !isWatchApk) {
+                            apkUrl = url
+                            apkSize = size
+                            break
+                        }
                     }
                 }
+            }
+
+            if (apkUrl == null && fallbackApkUrl != null) {
+                apkUrl = fallbackApkUrl
+                apkSize = fallbackApkSize
             }
 
             if (apkUrl.isNullOrBlank()) {

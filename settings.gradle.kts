@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "EcowittPixelWeather"
-include(":app")
+include(":app", ":wear")

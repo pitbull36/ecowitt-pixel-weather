@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.dariopittera.ecowittpixel.wear-mergeReleaseResources-72:/values-h720dp-v13/values-h720dp-v13.xml",
+            "map": [
+                {
+                    "source": "/usr/local/google/home/dariopittera/.gradle/caches/8.10.2/transforms/6bb44ad11fbedfdc7fc5d2f2b37c9345/transformed/appcompat-1.1.0/res/values-h720dp-v13/values-h720dp-v13.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "66",
+                        "endOffsets": "117"
+                    }
+                }
+            ]
+        }
+    ]
+}

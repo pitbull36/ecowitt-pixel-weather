@@ -20,6 +20,7 @@ import androidx.work.WorkerParameters
 import com.dariopittera.ecowittpixel.MainActivity
 import com.dariopittera.ecowittpixel.data.EcowittApiClient
 import com.dariopittera.ecowittpixel.data.LocalHistoryStore
+import com.dariopittera.ecowittpixel.data.WearDataLayerBridge
 import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.MouldRiskLevel
@@ -42,6 +43,7 @@ class WeatherSyncWorker(
         val snapshot = api.fetchAtmosphere(settings, SimulationParameters())
         store.saveWidgetSnapshotCache(snapshot)
         runCatching { EcowittGlanceWidget().updateAll(applicationContext) }
+        runCatching { WearDataLayerBridge.pushToWatch(applicationContext, store, settings, snapshot) }
 
         if (settings.notificationsEnabled) {
             evaluateAndNotify(applicationContext, snapshot, settings)
@@ -111,11 +113,33 @@ class WeatherSyncWorker(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            fun dispatchCriterionAlert(key: String, notifId: Int, title: String, body: String) {
+            fun dispatchCriterionAlert(
+                key: String,
+                notifId: Int,
+                title: String,
+                body: String,
+                channelId: String = "gateway"
+            ) {
                 triggeredSummaries.add("$title — $body")
                 if (!canPost) return
                 val lastSentMs = cooldownPrefs.getLong(key, 0L)
                 if (forceTest || (nowMs - lastSentMs) >= COOLDOWN_MS) {
+                    val watchIntent = Intent(context, WatchActionReceiver::class.java).apply {
+                        action = WatchActionReceiver.ACTION_OPEN_ROOM_ON_WATCH
+                        putExtra(WatchActionReceiver.EXTRA_CHANNEL_ID, channelId)
+                    }
+                    val watchPendingIntent = PendingIntent.getBroadcast(
+                        context,
+                        notifId,
+                        watchIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    val watchAction = NotificationCompat.Action.Builder(
+                        android.R.drawable.ic_menu_view,
+                        "Open room on watch",
+                        watchPendingIntent
+                    ).build()
+
                     val notif = NotificationCompat.Builder(context, CHANNEL_ID)
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
                         .setContentTitle(title)
@@ -123,6 +147,8 @@ class WeatherSyncWorker(
                         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setContentIntent(pendingIntent)
+                        .addAction(watchAction)
+                        .extend(NotificationCompat.WearableExtender().addAction(watchAction))
                         .setAutoCancel(true)
                         .build()
                     NotificationManagerCompat.from(context).notify(notifId, notif)
@@ -163,7 +189,8 @@ class WeatherSyncWorker(
                             key = humHighKey,
                             notifId = 1000 + idx,
                             title = "${room.roomName}: high humidity (${room.humidityPct.toInt()}% RH)",
-                            body = "Exceeds ${maxHum.toInt()}% RH limit ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg"
+                            body = "Exceeds ${maxHum.toInt()}% RH limit ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg",
+                            channelId = room.channelId
                         )
                     } else {
                         clearCriterionCooldown(humHighKey)
@@ -174,7 +201,8 @@ class WeatherSyncWorker(
                             key = humLowKey,
                             notifId = 1100 + idx,
                             title = "${room.roomName}: dry air (${room.humidityPct.toInt()}% RH)",
-                            body = "Below ${minHum.toInt()}% RH minimum comfort threshold ($citation)."
+                            body = "Below ${minHum.toInt()}% RH minimum comfort threshold ($citation).",
+                            channelId = room.channelId
                         )
                     } else {
                         clearCriterionCooldown(humLowKey)
@@ -191,7 +219,8 @@ class WeatherSyncWorker(
                             key = tempKey,
                             notifId = 2000 + idx,
                             title = "${room.roomName}: temperature $reason",
-                            body = "Current ${settings.tempUnit.format(room.temperatureC)} is $reason ($citation)."
+                            body = "Current ${settings.tempUnit.format(room.temperatureC)} is $reason ($citation).",
+                            channelId = room.channelId
                         )
                     } else {
                         clearCriterionCooldown(tempKey)
@@ -205,7 +234,8 @@ class WeatherSyncWorker(
                         key = mouldKey,
                         notifId = 3000 + idx,
                         title = "${room.roomName}: high mould and condensation risk",
-                        body = "Dew point ${settings.tempUnit.format(room.dewPointC)} is close to room temperature (${settings.tempUnit.format(room.temperatureC)} at ${room.humidityPct.toInt()}% RH)."
+                        body = "Dew point ${settings.tempUnit.format(room.dewPointC)} is close to room temperature (${settings.tempUnit.format(room.temperatureC)} at ${room.humidityPct.toInt()}% RH).",
+                        channelId = room.channelId
                     )
                 } else {
                     clearCriterionCooldown(mouldKey)
@@ -225,7 +255,8 @@ class WeatherSyncWorker(
                                 "Outdoor air carries %.1f g/m³ less moisture than indoors (%.0f%% RH) and will naturally dry the room.",
                                 absDiff,
                                 room.humidityPct
-                            )
+                            ),
+                            channelId = room.channelId
                         )
                     } else {
                         clearCriterionCooldown(ventKey)
@@ -239,7 +270,8 @@ class WeatherSyncWorker(
                         key = battKey,
                         notifId = 5000 + idx,
                         title = "${room.roomName}: sensor battery low",
-                        body = "Replace the battery in ${room.hardwareLabel} (${room.channelId.uppercase()}) to maintain continuous telemetry."
+                        body = "Replace the battery in ${room.hardwareLabel} (${room.channelId.uppercase()}) to maintain continuous telemetry.",
+                        channelId = room.channelId
                     )
                 } else {
                     clearCriterionCooldown(battKey)
@@ -254,7 +286,8 @@ class WeatherSyncWorker(
                     key = pressKey,
                     notifId = 6000,
                     title = "Rapid barometric pressure drop (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)",
-                    body = snapshot.pressureForecastText
+                    body = snapshot.pressureForecastText,
+                    channelId = "gateway"
                 )
             } else {
                 clearCriterionCooldown(pressKey)
@@ -291,7 +324,8 @@ class WeatherSyncWorker(
                         key = critKey,
                         notifId = 7000 + cIdx,
                         title = "Criterion met: ${targetRoom.roomName} ${crit.metric.label.lowercase()} ${crit.operator.symbol} $formattedTarget",
-                        body = bodyText
+                        body = bodyText,
+                        channelId = targetRoom.channelId
                     )
                 } else {
                     clearCriterionCooldown(critKey)

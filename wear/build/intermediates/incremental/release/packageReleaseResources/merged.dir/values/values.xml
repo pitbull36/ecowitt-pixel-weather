@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ecowitt Watch</string>
+    <string name="complication_label">Ecowitt Room Sensor</string>
+    <string name="tile_description">All rooms with top temperature and bottom humidity bezel arcs.</string>
+    <string name="tile_label">Ecowitt Rooms</string>
+    <style name="Theme.EcowittWatch" parent="android:Theme.DeviceDefault">
+        <item name="android:windowSwipeToDismiss">true</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

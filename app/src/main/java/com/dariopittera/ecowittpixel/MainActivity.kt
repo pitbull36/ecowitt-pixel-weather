@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
                 val statusBanner by viewModel.statusBanner.collectAsState()
                 val otaButtonLabel by viewModel.otaButtonLabel.collectAsState()
                 val isCheckingOta by viewModel.isCheckingOta.collectAsState()
+                val connectedWatchNodes by viewModel.connectedWatchNodes.collectAsState()
+                val isSyncingWatch by viewModel.isSyncingWatch.collectAsState()
 
                 var activeTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -161,6 +163,9 @@ class MainActivity : ComponentActivity() {
                             statusBanner = statusBanner,
                             otaButtonLabel = otaButtonLabel,
                             isCheckingOta = isCheckingOta,
+                            connectedWatchNodes = connectedWatchNodes,
+                            isSyncingWatch = isSyncingWatch,
+                            onSyncWatchNow = viewModel::syncToWatchNow,
                             onCheckOtaUpdate = viewModel::checkAndInstallOtaUpdate,
                             onTestNotifications = viewModel::testActiveNotificationsNow,
                             onUpdateSettings = viewModel::updateSettings,

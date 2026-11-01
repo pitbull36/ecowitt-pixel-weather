@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.dariopittera.ecowittpixel.wear-mergeReleaseResources-72:/values-v30/values-v30.xml",
+            "map": [
+                {
+                    "source": "/usr/local/google/home/dariopittera/.gradle/caches/8.10.2/transforms/2e9a2b0a25bb6a61c8b6861cc90f3240/transformed/material3-release/res/values-v30/values-v30.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "72",
+                        "endOffsets": "123"
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -10,6 +10,8 @@ import com.dariopittera.ecowittpixel.BuildConfig
 import com.dariopittera.ecowittpixel.data.EcowittApiClient
 import com.dariopittera.ecowittpixel.data.LocalHistoryStore
 import com.dariopittera.ecowittpixel.data.OtaUpdater
+import com.dariopittera.ecowittpixel.data.WearDataLayerBridge
+import com.dariopittera.ecowittpixel.data.WearNodeInfo
 import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.RoomConfig
@@ -59,6 +61,12 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private val _isCheckingOta = MutableStateFlow(false)
     val isCheckingOta: StateFlow<Boolean> = _isCheckingOta.asStateFlow()
 
+    private val _connectedWatchNodes = MutableStateFlow<List<WearNodeInfo>>(emptyList())
+    val connectedWatchNodes: StateFlow<List<WearNodeInfo>> = _connectedWatchNodes.asStateFlow()
+
+    private val _isSyncingWatch = MutableStateFlow(false)
+    val isSyncingWatch: StateFlow<Boolean> = _isSyncingWatch.asStateFlow()
+
     private var pollingJob: Job? = null
 
     init {
@@ -79,8 +87,35 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                         WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
                     }
                     runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                    pushSnapshotToWatchQuietly(updated)
                 }
             }
+        }
+    }
+
+    private suspend fun pushSnapshotToWatchQuietly(snap: HomeAtmosphereSnapshot) {
+        val result = WearDataLayerBridge.pushToWatch(
+            context = getApplication(),
+            store = historyStore,
+            settings = _settings.value,
+            snapshot = snap
+        )
+        _connectedWatchNodes.value = result.connectedNodes
+    }
+
+    fun syncToWatchNow() {
+        if (_isSyncingWatch.value) return
+        viewModelScope.launch {
+            _isSyncingWatch.value = true
+            val result = WearDataLayerBridge.pushToWatch(
+                context = getApplication(),
+                store = historyStore,
+                settings = _settings.value,
+                snapshot = _snapshot.value
+            )
+            _connectedWatchNodes.value = result.connectedNodes
+            _statusBanner.value = result.message
+            _isSyncingWatch.value = false
         }
     }
 
@@ -92,6 +127,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
                 WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
             }
             runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+            pushSnapshotToWatchQuietly(updated)
         }
     }
 
@@ -128,6 +164,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             }
             viewModelScope.launch {
                 runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                pushSnapshotToWatchQuietly(updated)
             }
         }
     }

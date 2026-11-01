@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dariopittera.ecowittpixel.BuildConfig
+import com.dariopittera.ecowittpixel.data.WearNodeInfo
 import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.ComparisonOperator
 import com.dariopittera.ecowittpixel.model.CustomAlertCriterion
@@ -72,6 +74,9 @@ fun SettingsScreen(
     statusBanner: String?,
     otaButtonLabel: String,
     isCheckingOta: Boolean,
+    connectedWatchNodes: List<WearNodeInfo>,
+    isSyncingWatch: Boolean,
+    onSyncWatchNow: () -> Unit,
     onCheckOtaUpdate: () -> Unit,
     onTestNotifications: () -> Unit,
     onUpdateSettings: (AppSettings) -> Unit,
@@ -166,6 +171,65 @@ fun SettingsScreen(
                     Text(
                         text = otaButtonLabel,
                         color = Color(0xFF06211E),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 0b. Pixel Watch Companion Sync Card
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF15263B)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Watch,
+                            contentDescription = "Pixel Watch companion",
+                            tint = CoolCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val watchTitle = if (connectedWatchNodes.isNotEmpty()) {
+                            val names = connectedWatchNodes.joinToString(", ") { it.displayName }
+                            "Pixel Watch connected ($names)"
+                        } else {
+                            "Pixel Watch companion"
+                        }
+                        Text(
+                            text = watchTitle,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Syncs API keys, room names, 24h history, and live telemetry to your Pixel Watch via Wearable Data Layer.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFB0BEC5)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Button(
+                    onClick = onSyncWatchNow,
+                    enabled = !isSyncingWatch,
+                    colors = ButtonDefaults.buttonColors(containerColor = CoolCyan)
+                ) {
+                    Text(
+                        text = if (isSyncingWatch) "Syncing..." else "Sync to watch",
+                        color = Color(0xFF061624),
                         fontWeight = FontWeight.Bold
                     )
                 }

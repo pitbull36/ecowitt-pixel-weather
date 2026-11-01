@@ -288,6 +288,126 @@ class LocalHistoryStore(private val context: Context) :
     }
 
     fun saveWidgetSnapshotCache(snapshot: HomeAtmosphereSnapshot) {
+        val rawJson = serializeSnapshotJson(snapshot)
+        prefs.edit().putString("cached_snapshot_json", rawJson).apply()
+    }
+
+    fun loadWidgetSnapshotCache(): HomeAtmosphereSnapshot? {
+        val raw = prefs.getString("cached_snapshot_json", null) ?: return null
+        return deserializeSnapshotJson(raw)
+    }
+
+    fun serializeSettingsJson(settings: AppSettings): String {
+        val roomsObj = JSONObject()
+        settings.roomConfigs.forEach { (channelId, cfg) ->
+            val obj = JSONObject().apply {
+                put("channelId", cfg.channelId)
+                put("customName", cfg.customName)
+                put("archetype", cfg.archetype.id)
+                put("alertTempMinC", cfg.alertTempMinC.toDouble())
+                put("alertTempMaxC", cfg.alertTempMaxC.toDouble())
+                put("alertHumidityMinPct", cfg.alertHumidityMinPct.toDouble())
+                put("alertHumidityMaxPct", cfg.alertHumidityMaxPct.toDouble())
+                put("alertsEnabled", cfg.alertsEnabled)
+            }
+            roomsObj.put(channelId, obj)
+        }
+        val criteriaArr = JSONArray()
+        settings.customCriteria.forEach { crit ->
+            val cObj = JSONObject().apply {
+                put("id", crit.id)
+                put("channelId", crit.channelId)
+                put("metric", crit.metric.id)
+                put("operator", crit.operator.id)
+                put("threshold", crit.threshold.toDouble())
+                put("customMessage", crit.customMessage)
+                put("enabled", crit.enabled)
+            }
+            criteriaArr.put(cObj)
+        }
+        return JSONObject().apply {
+            put("gatewayIp", settings.gatewayIp.trim())
+            put("cloudApplicationKey", settings.cloudApplicationKey.trim())
+            put("cloudApiKey", settings.cloudApiKey.trim())
+            put("cloudDeviceMac", settings.cloudDeviceMac.trim())
+            put("preferLocalLan", settings.preferLocalLan)
+            put("demoModeEnabled", settings.demoModeEnabled)
+            put("tempUnit", settings.tempUnit.name)
+            put("pressureUnit", settings.pressureUnit.name)
+            put("pollingIntervalMinutes", settings.pollingIntervalMinutes)
+            put("notificationsEnabled", settings.notificationsEnabled)
+            put("ventilationAdviceNotifications", settings.ventilationAdviceNotifications)
+            put("mouldRiskNotifications", settings.mouldRiskNotifications)
+            put("pressureDropNotifications", settings.pressureDropNotifications)
+            put("lowBatteryNotifications", settings.lowBatteryNotifications)
+            put("gyroscopeParallaxEnabled", settings.gyroscopeParallaxEnabled)
+            put("roomConfigs", roomsObj)
+            put("customCriteria", criteriaArr)
+        }.toString()
+    }
+
+    fun deserializeSettingsJson(raw: String): AppSettings? {
+        return try {
+            val defaults = AppSettings()
+            val root = JSONObject(raw)
+            val roomsObj = root.optJSONObject("roomConfigs")
+            val roomConfigs = if (roomsObj != null) {
+                parseRoomConfigs(roomsObj.toString())
+            } else {
+                AppSettings.defaultRoomConfigs()
+            }
+            val criteriaArr = root.optJSONArray("customCriteria")
+            val customCriteria = if (criteriaArr != null) {
+                parseCustomCriteria(criteriaArr.toString())
+            } else {
+                AppSettings.defaultCustomCriteria()
+            }
+            AppSettings(
+                gatewayIp = root.optString("gatewayIp", defaults.gatewayIp),
+                cloudApplicationKey = root.optString("cloudApplicationKey", ""),
+                cloudApiKey = root.optString("cloudApiKey", ""),
+                cloudDeviceMac = root.optString("cloudDeviceMac", ""),
+                preferLocalLan = root.optBoolean("preferLocalLan", defaults.preferLocalLan),
+                demoModeEnabled = root.optBoolean("demoModeEnabled", defaults.demoModeEnabled),
+                tempUnit = TempUnit.entries.firstOrNull {
+                    it.name == root.optString("tempUnit", TempUnit.CELSIUS.name)
+                } ?: TempUnit.CELSIUS,
+                pressureUnit = PressureUnit.entries.firstOrNull {
+                    it.name == root.optString("pressureUnit", PressureUnit.HPA.name)
+                } ?: PressureUnit.HPA,
+                pollingIntervalMinutes = root.optInt("pollingIntervalMinutes", defaults.pollingIntervalMinutes),
+                notificationsEnabled = root.optBoolean("notificationsEnabled", defaults.notificationsEnabled),
+                ventilationAdviceNotifications = root.optBoolean(
+                    "ventilationAdviceNotifications",
+                    defaults.ventilationAdviceNotifications
+                ),
+                mouldRiskNotifications = root.optBoolean(
+                    "mouldRiskNotifications",
+                    defaults.mouldRiskNotifications
+                ),
+                pressureDropNotifications = root.optBoolean(
+                    "pressureDropNotifications",
+                    defaults.pressureDropNotifications
+                ),
+                lowBatteryNotifications = root.optBoolean(
+                    "lowBatteryNotifications",
+                    defaults.lowBatteryNotifications
+                ),
+                gyroscopeParallaxEnabled = root.optBoolean(
+                    "gyroscopeParallaxEnabled",
+                    defaults.gyroscopeParallaxEnabled
+                ),
+                roomConfigs = roomConfigs,
+                customCriteria = customCriteria
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun serializeSnapshotJson(snapshot: HomeAtmosphereSnapshot): String {
+        val nowMs = System.currentTimeMillis()
+        val cutoff24h = nowMs - 24L * 3600L * 1000L
         val root = JSONObject().apply {
             put("source", snapshot.source.name)
             put("gatewayModel", snapshot.gatewayModel)
@@ -316,25 +436,75 @@ class LocalHistoryStore(private val context: Context) :
                     if (room.pressureTrend3hHpa != null) {
                         put("pressureTrend3hHpa", room.pressureTrend3hHpa.toDouble())
                     }
+                    val recent24h = room.history.filter { it.timestampMs >= cutoff24h }.ifEmpty {
+                        room.history.takeLast(48)
+                    }
+                    val step = (recent24h.size / 48).coerceAtLeast(1)
+                    val histArr = JSONArray()
+                    for (i in recent24h.indices step step) {
+                        val pt = recent24h[i]
+                        histArr.put(
+                            JSONObject().apply {
+                                put("t", pt.timestampMs)
+                                put("c", pt.temperatureC.toDouble())
+                                put("h", pt.humidityPct.toDouble())
+                                if (pt.pressureHpa != null) {
+                                    put("p", pt.pressureHpa.toDouble())
+                                }
+                            }
+                        )
+                    }
+                    if (recent24h.isNotEmpty() && (recent24h.size - 1) % step != 0) {
+                        val lastPt = recent24h.last()
+                        histArr.put(
+                            JSONObject().apply {
+                                put("t", lastPt.timestampMs)
+                                put("c", lastPt.temperatureC.toDouble())
+                                put("h", lastPt.humidityPct.toDouble())
+                                if (lastPt.pressureHpa != null) {
+                                    put("p", lastPt.pressureHpa.toDouble())
+                                }
+                            }
+                        )
+                    }
+                    put("history", histArr)
                 }
                 arr.put(rObj)
             }
             put("rooms", arr)
         }
-        prefs.edit().putString("cached_snapshot_json", root.toString()).apply()
+        return root.toString()
     }
 
-    fun loadWidgetSnapshotCache(): HomeAtmosphereSnapshot? {
-        val raw = prefs.getString("cached_snapshot_json", null) ?: return null
+    fun deserializeSnapshotJson(raw: String): HomeAtmosphereSnapshot? {
         return try {
             val root = JSONObject(raw)
             val arr = root.getJSONArray("rooms")
             val rooms = ArrayList<SensorRoomState>()
             for (i in 0 until arr.length()) {
                 val rObj = arr.getJSONObject(i)
+                val histArr = rObj.optJSONArray("history")
+                val historyPts = ArrayList<HistoricalPoint>()
+                if (histArr != null) {
+                    for (j in 0 until histArr.length()) {
+                        val hObj = histArr.getJSONObject(j)
+                        historyPts.add(
+                            HistoricalPoint(
+                                timestampMs = hObj.optLong("t", 0L),
+                                temperatureC = hObj.optDouble("c", 20.0).toFloat(),
+                                humidityPct = hObj.optDouble("h", 50.0).toFloat(),
+                                pressureHpa = if (hObj.has("p")) hObj.optDouble("p").toFloat() else null
+                            )
+                        )
+                    }
+                }
+                val chId = rObj.getString("channelId")
+                val finalHistory = historyPts.ifEmpty {
+                    loadChannelHistory(chId, System.currentTimeMillis() - 24L * 3600L * 1000L)
+                }
                 rooms.add(
                     SensorRoomState(
-                        channelId = rObj.getString("channelId"),
+                        channelId = chId,
                         hardwareLabel = rObj.optString("hardwareLabel", "Sensor"),
                         roomName = rObj.getString("roomName"),
                         archetype = RoomArchetype.fromId(rObj.optString("archetype", "living_room")),
@@ -351,7 +521,8 @@ class LocalHistoryStore(private val context: Context) :
                         humidityTrend1hPct = rObj.optDouble("humidityTrend1hPct", 0.0).toFloat(),
                         pressureTrend3hHpa = if (rObj.has("pressureTrend3hHpa")) {
                             rObj.getDouble("pressureTrend3hHpa").toFloat()
-                        } else null
+                        } else null,
+                        history = finalHistory
                     )
                 )
             }
