@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 export PATH="$HOME/.local/bin:$PATH"
 export JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk/jdk-21}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+APKSIGNER="${ANDROID_HOME}/build-tools/35.0.0/apksigner"
 
 VERSION_CODE="${1:-5}"
 WATCH_VERSION_CODE=$((3000 + VERSION_CODE))
@@ -30,11 +31,25 @@ echo "==> Step 1: Building signed Pixel Watch Release APK (versionCode=${WATCH_V
 
 WATCH_APK_SOURCE="wear/build/outputs/apk/release/wear-release.apk"
 WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-pixel-watch-v${VERSION_NAME}.apk"
-cp "$WATCH_APK_SOURCE" "$WATCH_APK_DEST"
-echo "==> Built signed Pixel Watch APK: $WATCH_APK_DEST"
 
-# Embed the signed Pixel Watch APK inside the phone app's res/raw/wearos_app.apk so tools like
-# Wear Installer 2 can also extract and install the watch APK directly from the installed phone app.
+# Force v1 (JAR META-INF) + v2 + v3 signatures with --min-sdk-version 21 so Wear Installer 2,
+# Bugjaeger, and Wear OS PackageInstaller all validate the watch APK without "package is not valid".
+"$APKSIGNER" sign \
+  --min-sdk-version 21 \
+  --ks release-keystore.jks \
+  --ks-pass pass:pixelota123 \
+  --ks-key-alias pixelota \
+  --key-pass pass:pixelota123 \
+  --v1-signing-enabled true \
+  --v2-signing-enabled true \
+  --v3-signing-enabled true \
+  "$WATCH_APK_SOURCE"
+
+cp "$WATCH_APK_SOURCE" "$WATCH_APK_DEST"
+echo "==> Built and v1+v2+v3 signed Pixel Watch APK: $WATCH_APK_DEST"
+
+# Embed the v1+v2+v3 signed Pixel Watch APK inside the phone app's res/raw/wearos_app.apk so tools
+# like Wear Installer 2 can also extract and install the watch APK directly from the phone app.
 mkdir -p app/src/main/res/raw
 cp "$WATCH_APK_SOURCE" app/src/main/res/raw/wearos_app.apk
 
@@ -45,8 +60,20 @@ echo "==> Step 2: Building signed Pixel 10 Phone Release APK (versionCode=${VERS
 # ensuring phones on older builds (v2.0.0) always download the phone APK and never the watch APK.
 PHONE_APK_SOURCE="app/build/outputs/apk/release/app-release.apk"
 PHONE_APK_DEST="app/build/outputs/apk/release/ecowitt-pixel-weather-v${VERSION_NAME}.apk"
+
+"$APKSIGNER" sign \
+  --min-sdk-version 21 \
+  --ks release-keystore.jks \
+  --ks-pass pass:pixelota123 \
+  --ks-key-alias pixelota \
+  --key-pass pass:pixelota123 \
+  --v1-signing-enabled true \
+  --v2-signing-enabled true \
+  --v3-signing-enabled true \
+  "$PHONE_APK_SOURCE"
+
 cp "$PHONE_APK_SOURCE" "$PHONE_APK_DEST"
-echo "==> Built signed Pixel 10 APK: $PHONE_APK_DEST"
+echo "==> Built and v1+v2+v3 signed Pixel 10 APK: $PHONE_APK_DEST"
 
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   echo "WARNING: GitHub CLI not authenticated; APKs are ready locally:"
@@ -64,7 +91,7 @@ fi
 
 git add .
 if ! git diff --cached --quiet; then
-  git commit -m "Release ${TAG_NAME}: Ecowitt atmosphere for Pixel 10 and Pixel Watch"
+  git commit -m "Release ${TAG_NAME}: Force v1+v2+v3 APK signatures and monotonic watch versionCode"
 fi
 
 if ! git remote get-url origin >/dev/null 2>&1; then
