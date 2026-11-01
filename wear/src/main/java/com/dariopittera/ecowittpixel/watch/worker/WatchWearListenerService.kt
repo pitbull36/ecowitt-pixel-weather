@@ -38,7 +38,11 @@ class WatchWearListenerService : WearableListenerService() {
             WearDataLayerBridge.PATH_INSTANT_PUSH -> {
                 serviceScope.launch {
                     val store = LocalHistoryStore(applicationContext)
-                    WearDataLayerBridge.applyIncomingPayloadBytes(messageEvent.data, store)
+                    WearDataLayerBridge.applyIncomingPayloadBytes(
+                        messageEvent.data,
+                        store,
+                        applicationContext
+                    )
                     WatchViewModel.refreshWatchSurfaces(applicationContext)
                     sendBroadcast(
                         Intent(WatchViewModel.ACTION_WATCH_DATA_UPDATED).apply {

@@ -46,10 +46,11 @@ class EcowittComplicationService : SuspendingComplicationDataSourceService() {
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
         val store = LocalHistoryStore(applicationContext)
         val (dlSettings, dlSnapshot) = WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
-        val settings = dlSettings ?: store.loadSettings()
-        val snapshot = dlSnapshot
+        val settings = (dlSettings ?: store.loadSettings()).copy(demoModeEnabled = false)
+        val rawSnapshot = dlSnapshot
             ?: store.loadWidgetSnapshotCache()
             ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+        val snapshot = settings.applyToSnapshot(rawSnapshot)
 
         val slotCfg = ComplicationConfigStore.loadSlotConfig(
             applicationContext,

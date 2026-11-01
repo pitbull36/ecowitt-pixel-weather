@@ -50,12 +50,19 @@ import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.RoomAlertBreach
 import com.dariopittera.ecowittpixel.model.SensorRoomState
-import com.dariopittera.ecowittpixel.watch.DetailCrownMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private fun formatWatchRoomName(rawName: String): String {
+    return rawName
+        .replace(" (GW1200)", "", ignoreCase = true)
+        .replace(Regex("""\s*\(Ch\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+        .trim()
+        .ifBlank { rawName }
+}
 
 @Composable
 fun WatchRootScreen(
@@ -64,10 +71,7 @@ fun WatchRootScreen(
     breaches: List<RoomAlertBreach>,
     carouselIndex: Int,
     detailChannelId: String?,
-    detailCrownMode: DetailCrownMode,
     historyScrubFraction: Float,
-    crownYawOffset: Float,
-    crownPitchOffset: Float,
     isAmbient: Boolean,
     ambientMinuteTick: Int,
     statusText: String,
@@ -77,7 +81,6 @@ fun WatchRootScreen(
     onSelectCarouselPage: (Int) -> Unit,
     onOpenRoomDetail: (String) -> Unit,
     onCloseRoomDetail: () -> Unit,
-    onToggleDetailCrownMode: () -> Unit,
     onResetDetailView: () -> Unit,
     onDetailCrownScroll: (Float) -> Unit,
     onSyncNow: () -> Unit,
@@ -94,14 +97,10 @@ fun WatchRootScreen(
             room = activeDetailRoom,
             settings = settings,
             breaches = roomBreaches,
-            crownMode = detailCrownMode,
             scrubFraction = historyScrubFraction,
-            crownYawOffset = crownYawOffset,
-            crownPitchOffset = crownPitchOffset,
             isAmbient = isAmbient,
             ambientMinuteTick = ambientMinuteTick,
             onBack = onCloseRoomDetail,
-            onToggleCrownMode = onToggleDetailCrownMode,
             onResetView = onResetDetailView,
             onCrownScroll = onDetailCrownScroll,
             modifier = modifier
@@ -129,7 +128,7 @@ fun WatchRootScreen(
 
 /**
  * Level 1: Main Pixel Watch carousel where rotating the crown cycles between rooms
- * (Indoor Gateway, Channel 1, Channel 2) and a final Sync & OTA card.
+ * and a final Sync and OTA card.
  */
 @Composable
 private fun WatchMainCarouselScreen(
@@ -225,7 +224,6 @@ private fun WatchMainCarouselScreen(
                     .padding(top = 18.dp, start = 26.dp, end = 26.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Page indicator dots
                 if (!isAmbient) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -247,7 +245,7 @@ private fun WatchMainCarouselScreen(
                 }
 
                 Text(
-                    text = room.roomName.substringBefore(" ("),
+                    text = formatWatchRoomName(room.roomName),
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -275,7 +273,7 @@ private fun WatchMainCarouselScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
-                            .background( Color(0xCC3B1018))
+                            .background(Color(0xCC3B1018))
                             .border(1.dp, WatchThermalCoral, RoundedCornerShape(10.dp))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
@@ -310,14 +308,6 @@ private fun WatchMainCarouselScreen(
                         )
                     }
                 }
-
-                if (!isAmbient) {
-                    Text(
-                        text = "Tap room for 24h scrub",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 9.sp
-                    )
-                }
             }
         } else {
             // Final carousel page: Watch Sync & GitHub OTA Update card
@@ -336,23 +326,18 @@ private fun WatchMainCarouselScreen(
 
 /**
  * Level 2: Tapped Room Detail Screen.
- * - Default crown mode: scrubs 24h history (updating the top temperature arc, bottom humidity arc,
- *   and 3D room state through time).
- * - Tap toggle: switches crown to 3D room tilt mode so rotating the crown orbits the 3D diorama.
+ * Rotating the crown scrubs the 24h history timeline (updating the top temperature arc,
+ * bottom humidity arc, and 3D room state through time).
  */
 @Composable
 private fun WatchRoomDetailScreen(
     room: SensorRoomState,
     settings: AppSettings,
     breaches: List<RoomAlertBreach>,
-    crownMode: DetailCrownMode,
     scrubFraction: Float,
-    crownYawOffset: Float,
-    crownPitchOffset: Float,
     isAmbient: Boolean,
     ambientMinuteTick: Int,
     onBack: () -> Unit,
-    onToggleCrownMode: () -> Unit,
     onResetView: () -> Unit,
     onCrownScroll: (Float) -> Unit,
     modifier: Modifier = Modifier
@@ -362,7 +347,7 @@ private fun WatchRoomDetailScreen(
     val focusRequester = remember { FocusRequester() }
     val haptics = LocalHapticFeedback.current
 
-    LaunchedEffect(room.channelId, crownMode) {
+    LaunchedEffect(room.channelId) {
         runCatching { focusRequester.requestFocus() }
     }
 
@@ -415,15 +400,8 @@ private fun WatchRoomDetailScreen(
             breaches = breaches,
             gyroEnabled = settings.gyroscopeParallaxEnabled,
             isAmbient = isAmbient,
-            crownYawOffset = crownYawOffset,
-            crownPitchOffset = crownPitchOffset,
             ambientMinuteTick = ambientMinuteTick,
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(enabled = !isAmbient) {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggleCrownMode()
-                }
+            modifier = Modifier.fillMaxSize()
         )
 
         // Top HUD below the upper temperature bezel arc
@@ -451,7 +429,7 @@ private fun WatchRoomDetailScreen(
                     )
                 }
                 Text(
-                    text = displayedRoom.roomName.substringBefore(" ("),
+                    text = formatWatchRoomName(displayedRoom.roomName),
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -469,18 +447,18 @@ private fun WatchRoomDetailScreen(
 
             Text(
                 text = timeBadgeText,
-                color = if (isLiveNow) WatchComfortEmerald else WatchThermalAmber,
+                color = if (isLiveNow) WatchCoolCyan else WatchThermalAmber,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }
 
-        // Bottom HUD above the lower humidity bezel arc: 24h mini sparkline + Crown Mode toggle pill
+        // Bottom HUD above the lower humidity bezel arc: 24h mini sparkline
         if (!isAmbient) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 18.dp, start = 28.dp, end = 28.dp),
+                    .padding(bottom = 20.dp, start = 28.dp, end = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (history24h.size >= 2) {
@@ -493,50 +471,21 @@ private fun WatchRoomDetailScreen(
                             .fillMaxWidth()
                             .height(22.dp)
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val isScrub = crownMode == DetailCrownMode.SCRUB_24H
-                    Box(
+                if (!isLiveNow) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "Back to live",
+                        color = WatchCoolCyan,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isScrub) Color(0xFF1A3656) else Color(0xFF3A2814))
-                            .border(
-                                width = 1.dp,
-                                color = if (isScrub) WatchCoolCyan else WatchThermalAmber,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .clickable {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onToggleCrownMode()
-                            }
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            text = if (isScrub) "Crown: 24h scrub (tap for 3D tilt)" else "Crown: 3D tilt (tap for 24h scrub)",
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    if (!isLiveNow || abs(crownYawOffset) > 0.02f) {
-                        Text(
-                            text = "Reset",
-                            color = WatchCoolCyan,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xCC0F1E32))
-                                .clickable { onResetView() }
-                                .padding(horizontal = 5.dp, vertical = 3.dp)
-                        )
-                    }
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xCC0F1E32))
+                            .clickable { onResetView() }
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
                 }
             }
         }
@@ -572,7 +521,7 @@ private fun WatchMini24hSparkline(
             }
         }
 
-        drawPath(humPath, color = humColor.copy(alpha = 0.55f), style = Stroke(width = 1.8f))
+        drawPath(humPath, color = humColor.copy(alpha = 0.65f), style = Stroke(width = 1.8f))
         drawPath(tempPath, color = tempColor, style = Stroke(width = 2.4f))
 
         val scrubX = (scrubFraction.coerceIn(0f, 1f)) * size.width
@@ -653,7 +602,7 @@ private fun WatchSyncAndOtaPage(
             ) {
                 Text(
                     text = "Sync telemetry now",
-                    color = Color(0xFF04221F),
+                    color = Color(0xFF041A2E),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )

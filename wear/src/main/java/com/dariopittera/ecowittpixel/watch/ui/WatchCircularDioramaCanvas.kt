@@ -74,8 +74,6 @@ fun WatchCircularDioramaCanvas(
     breaches: List<RoomAlertBreach>,
     gyroEnabled: Boolean,
     isAmbient: Boolean,
-    crownYawOffset: Float = 0f,
-    crownPitchOffset: Float = 0f,
     ambientMinuteTick: Int = 0,
     modifier: Modifier = Modifier
 ) {
@@ -169,8 +167,8 @@ fun WatchCircularDioramaCanvas(
         }
 
         // 1. Central 3D Isometric Room Diorama
-        val baseYaw = (0.78f + gyroTiltX * 0.25f + crownYawOffset).coerceIn(0.20f, 1.38f)
-        val basePitch = (0.52f + gyroTiltY * 0.16f + crownPitchOffset).coerceIn(0.30f, 0.78f)
+        val baseYaw = (0.78f + gyroTiltX * 0.25f).coerceIn(0.20f, 1.38f)
+        val basePitch = (0.52f + gyroTiltY * 0.16f).coerceIn(0.30f, 0.78f)
         val cam = WatchIsoCamera(
             centerX = cx,
             centerY = cy + diameter * 0.055f,

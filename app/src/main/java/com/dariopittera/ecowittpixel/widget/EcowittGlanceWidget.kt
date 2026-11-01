@@ -250,10 +250,11 @@ class EcowittGlanceWidget : GlanceAppWidget() {
         tempUnit: TempUnit,
         modifier: GlanceModifier = GlanceModifier
     ) {
-        val accent = when {
-            room.temperatureC >= 24.5f -> Color(0xFFFF8A65)
-            room.temperatureC <= 16.5f -> Color(0xFF4DD0E1)
-            else -> Color(0xFF26A69A)
+        val humidityColor = when {
+            room.humidityPct < 35f -> Color(0xFF60A5FA)
+            room.humidityPct < 60f -> Color(0xFF38BDF8)
+            room.humidityPct < 65f -> Color(0xFF0EA5E9)
+            else -> Color(0xFF3B82F6)
         }
         Box(
             modifier = modifier
@@ -283,7 +284,7 @@ class EcowittGlanceWidget : GlanceAppWidget() {
                 Text(
                     text = "${room.humidityPct.toInt()}% RH",
                     style = TextStyle(
-                        color = ColorProvider(accent),
+                        color = ColorProvider(humidityColor),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )

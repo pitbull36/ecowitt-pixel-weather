@@ -39,7 +39,8 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     val simParams: StateFlow<SimulationParameters> = _simParams.asStateFlow()
 
     private val _snapshot = MutableStateFlow(
-        apiClient.generateSimulatedSnapshot(_settings.value, _simParams.value)
+        historyStore.loadWidgetSnapshotCache()
+            ?: apiClient.generateSimulatedSnapshot(_settings.value, _simParams.value)
     )
     val snapshot: StateFlow<HomeAtmosphereSnapshot> = _snapshot.asStateFlow()
 
@@ -70,6 +71,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private var pollingJob: Job? = null
 
     init {
+        WearDataLayerBridge.startPhoneLanSyncServer(application)
         refreshNow()
         startAutoPolling()
         WeatherSyncWorker.schedulePeriodicSync(application, _settings.value.pollingIntervalMinutes)
@@ -81,7 +83,9 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             while (isActive) {
                 delay(15_000L)
                 if (!_settings.value.demoModeEnabled) {
-                    val updated = apiClient.fetchAtmosphere(_settings.value, _simParams.value)
+                    val updated = _settings.value.applyToSnapshot(
+                        apiClient.fetchAtmosphere(_settings.value, _simParams.value)
+                    )
                     _snapshot.value = updated
                     if (_settings.value.notificationsEnabled) {
                         WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
@@ -98,7 +102,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             context = getApplication(),
             store = historyStore,
             settings = _settings.value,
-            snapshot = snap
+            snapshot = _settings.value.applyToSnapshot(snap)
         )
         _connectedWatchNodes.value = result.connectedNodes
     }
@@ -107,11 +111,14 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         if (_isSyncingWatch.value) return
         viewModelScope.launch {
             _isSyncingWatch.value = true
+            val synced = _settings.value.applyToSnapshot(_snapshot.value)
+            _snapshot.value = synced
+            historyStore.saveWidgetSnapshotCache(synced)
             val result = WearDataLayerBridge.pushToWatch(
                 context = getApplication(),
                 store = historyStore,
                 settings = _settings.value,
-                snapshot = _snapshot.value
+                snapshot = synced
             )
             _connectedWatchNodes.value = result.connectedNodes
             _statusBanner.value = result.message
@@ -121,8 +128,11 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     fun refreshNow() {
         viewModelScope.launch {
-            val updated = apiClient.fetchAtmosphere(_settings.value, _simParams.value)
+            val updated = _settings.value.applyToSnapshot(
+                apiClient.fetchAtmosphere(_settings.value, _simParams.value)
+            )
             _snapshot.value = updated
+            historyStore.saveWidgetSnapshotCache(updated)
             if (_settings.value.notificationsEnabled) {
                 WeatherSyncWorker.evaluateAndNotify(getApplication(), updated, _settings.value)
             }
@@ -141,10 +151,27 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateSettings(newSettings: AppSettings) {
+        val oldSettings = _settings.value
         _settings.value = newSettings
         historyStore.saveSettings(newSettings)
+        val immediatelyRenamed = newSettings.applyToSnapshot(_snapshot.value)
+        _snapshot.value = immediatelyRenamed
+        historyStore.saveWidgetSnapshotCache(immediatelyRenamed)
         WeatherSyncWorker.schedulePeriodicSync(getApplication(), newSettings.pollingIntervalMinutes)
-        refreshNow()
+        val connectionChanged = oldSettings.demoModeEnabled != newSettings.demoModeEnabled ||
+            oldSettings.gatewayIp != newSettings.gatewayIp ||
+            oldSettings.cloudApplicationKey != newSettings.cloudApplicationKey ||
+            oldSettings.cloudApiKey != newSettings.cloudApiKey ||
+            oldSettings.cloudDeviceMac != newSettings.cloudDeviceMac ||
+            oldSettings.preferLocalLan != newSettings.preferLocalLan
+        if (connectionChanged) {
+            refreshNow()
+        } else {
+            viewModelScope.launch {
+                runCatching { EcowittGlanceWidget().updateAll(getApplication()) }
+                pushSnapshotToWatchQuietly(immediatelyRenamed)
+            }
+        }
     }
 
     fun updateRoomConfig(channelId: String, updatedConfig: RoomConfig) {

@@ -56,8 +56,6 @@ class OtaUpdater(private val context: Context) {
 
             var apkUrl: String? = null
             var apkSize: Long = 0L
-            var fallbackApkUrl: String? = null
-            var fallbackApkSize: Long = 0L
 
             if (assets != null) {
                 for (i in 0 until assets.length()) {
@@ -66,10 +64,6 @@ class OtaUpdater(private val context: Context) {
                     if (name.endsWith(".apk", ignoreCase = true)) {
                         val url = asset.optString("browser_download_url", "")
                         val size = asset.optLong("size", 0L)
-                        if (fallbackApkUrl == null) {
-                            fallbackApkUrl = url
-                            fallbackApkSize = size
-                        }
                         val isWatchApk = name.contains("watch", ignoreCase = true) ||
                             name.contains("wear", ignoreCase = true)
                         if (preferWatchAsset && isWatchApk) {
@@ -85,13 +79,11 @@ class OtaUpdater(private val context: Context) {
                 }
             }
 
-            if (apkUrl == null && fallbackApkUrl != null) {
-                apkUrl = fallbackApkUrl
-                apkSize = fallbackApkSize
-            }
-
             if (apkUrl.isNullOrBlank()) {
-                return@withContext Result.failure(Exception("Latest release ($tagName) has no .apk asset attached"))
+                val targetLabel = if (preferWatchAsset) "watch" else "phone"
+                return@withContext Result.failure(
+                    Exception("Latest release ($tagName) has no compatible $targetLabel .apk asset")
+                )
             }
 
             val parsedVersionCode = parseVersionCode(tagName, body)

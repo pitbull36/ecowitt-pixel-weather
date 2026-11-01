@@ -488,7 +488,7 @@ fun SettingsScreen(
                         customName = room.roomName,
                         archetype = room.archetype
                     )
-                    var nameDraft by remember(cfg.customName) { mutableStateOf(cfg.customName) }
+                    var nameDraft by remember(room.channelId) { mutableStateOf(cfg.customName) }
 
                     Text(
                         text = "${room.hardwareLabel} (${room.channelId.uppercase()})",

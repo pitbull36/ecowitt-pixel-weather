@@ -48,10 +48,7 @@ class WatchMainActivity : ComponentActivity() {
                 val breaches by viewModel.breaches.collectAsState()
                 val carouselIndex by viewModel.carouselIndex.collectAsState()
                 val detailChannelId by viewModel.detailChannelId.collectAsState()
-                val detailCrownMode by viewModel.detailCrownMode.collectAsState()
                 val scrubFraction by viewModel.historyScrubFraction.collectAsState()
-                val crownYaw by viewModel.crownYawOffset.collectAsState()
-                val crownPitch by viewModel.crownPitchOffset.collectAsState()
                 val isAmbient by viewModel.isAmbient.collectAsState()
                 val ambientTick by viewModel.ambientMinuteTick.collectAsState()
                 val statusText by viewModel.statusText.collectAsState()
@@ -75,10 +72,7 @@ class WatchMainActivity : ComponentActivity() {
                     breaches = breaches,
                     carouselIndex = carouselIndex,
                     detailChannelId = detailChannelId,
-                    detailCrownMode = detailCrownMode,
                     historyScrubFraction = scrubFraction,
-                    crownYawOffset = crownYaw,
-                    crownPitchOffset = crownPitch,
                     isAmbient = isAmbient,
                     ambientMinuteTick = ambientTick,
                     statusText = statusText,
@@ -88,7 +82,6 @@ class WatchMainActivity : ComponentActivity() {
                     onSelectCarouselPage = viewModel::selectCarouselPage,
                     onOpenRoomDetail = viewModel::openRoomDetail,
                     onCloseRoomDetail = viewModel::closeRoomDetail,
-                    onToggleDetailCrownMode = viewModel::toggleDetailCrownMode,
                     onResetDetailView = viewModel::resetDetailView,
                     onDetailCrownScroll = viewModel::onDetailCrownScroll,
                     onSyncNow = { viewModel.syncHybridNow(quiet = false) },

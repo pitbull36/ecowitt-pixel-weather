@@ -7,7 +7,6 @@ import androidx.wear.protolayout.DimensionBuilders.degrees
 import androidx.wear.protolayout.DimensionBuilders.dp
 import androidx.wear.protolayout.DimensionBuilders.expand
 import androidx.wear.protolayout.DimensionBuilders.sp
-import androidx.wear.protolayout.DimensionBuilders.wrap
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.LayoutElementBuilders.Arc
 import androidx.wear.protolayout.LayoutElementBuilders.ArcLine
@@ -32,6 +31,7 @@ import com.dariopittera.ecowittpixel.data.LocalHistoryStore
 import com.dariopittera.ecowittpixel.data.WearDataLayerBridge
 import com.dariopittera.ecowittpixel.model.AlertEvaluator
 import com.dariopittera.ecowittpixel.model.AppSettings
+import com.dariopittera.ecowittpixel.model.ConnectionSource
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
 import com.dariopittera.ecowittpixel.model.SensorRoomState
 import com.dariopittera.ecowittpixel.model.SimulationParameters
@@ -41,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -55,14 +56,41 @@ class EcowittTileService : TileService() {
             tileScope.launch {
                 try {
                     val store = LocalHistoryStore(applicationContext)
-                    var settings = store.loadSettings()
-                    var snapshot = store.loadWidgetSnapshotCache()
-
-                    if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE || snapshot == null) {
-                        val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
-                        if (dlSettings != null) settings = dlSettings
-                        snapshot = dlSnap ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+                    val requestedCount = WearDataLayerBridge.requestSyncFromPhone(applicationContext)
+                    if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE && requestedCount > 0) {
+                        delay(400L)
                     }
+                    val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
+                    var settings = (dlSettings ?: store.loadSettings()).copy(demoModeEnabled = false)
+                    store.saveSettings(settings)
+
+                    var snapshot = dlSnap
+                        ?: store.loadWidgetSnapshotCache()
+                        ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+
+                    if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE ||
+                        snapshot.source == ConnectionSource.DEMO_SIMULATION
+                    ) {
+                        val fresh = EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+                        if (fresh.source != ConnectionSource.DEMO_SIMULATION) {
+                            snapshot = fresh
+                        } else {
+                            val (discSettings, discSnap) = WearDataLayerBridge.discoverPhoneOrGatewayOnLan(
+                                applicationContext,
+                                store
+                            )
+                            if (discSettings != null) {
+                                settings = discSettings.copy(demoModeEnabled = false)
+                                store.saveSettings(settings)
+                            }
+                            if (discSnap != null) {
+                                snapshot = discSnap
+                            }
+                        }
+                    }
+
+                    snapshot = settings.applyToSnapshot(snapshot)
+                    store.saveWidgetSnapshotCache(snapshot)
 
                     val tileLayout = buildTileLayout(snapshot, settings)
                     val tile = TileBuilders.Tile.Builder()
@@ -135,7 +163,7 @@ class EcowittTileService : TileService() {
             )
             .build()
 
-        // Outer bottom bezel arc (Humidity, centered at 180° bottom)
+        // Outer bottom bezel arc (Humidity, centered at 180° bottom, bluish water tone)
         val bottomTrackArc = Arc.Builder()
             .setAnchorAngle(degrees(180f))
             .setAnchorType(LayoutElementBuilders.ARC_ANCHOR_CENTER)
@@ -173,7 +201,7 @@ class EcowittTileService : TileService() {
                     FontStyle.Builder()
                         .setSize(sp(9f))
                         .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
-                        .setColor(argb(0xFF80DEEA.toInt()))
+                        .setColor(argb(0xFF60A5FA.toInt()))
                         .build()
                 )
                 .build()
@@ -229,7 +257,7 @@ class EcowittTileService : TileService() {
                         .setFontStyle(
                             FontStyle.Builder()
                                 .setSize(sp(9f))
-                                .setColor(argb(if (breaches.isNotEmpty()) 0xFFFFCDD2.toInt() else 0xFFCBD5E1.toInt()))
+                                .setColor(argb(if (breaches.isNotEmpty()) 0xFFFFCDD2.toInt() else 0xFF93C5FD.toInt()))
                                 .build()
                         )
                         .build()
@@ -294,7 +322,7 @@ class EcowittTileService : TileService() {
             .setOnClick(openRoomAction)
             .build()
 
-        val shortName = room.roomName.substringBefore(" (").take(11)
+        val shortName = formatTileRoomName(room.roomName).take(12)
         val tempStr = settings.tempUnit.format(room.temperatureC)
         val humStr = "${room.humidityPct.roundToInt()}%"
         val rowBg = if (hasBreach) 0xFF2D141C.toInt() else 0xFF111E30.toInt()
@@ -367,6 +395,14 @@ class EcowittTileService : TileService() {
             .build()
     }
 
+    private fun formatTileRoomName(rawName: String): String {
+        return rawName
+            .replace(" (GW1200)", "", ignoreCase = true)
+            .replace(Regex("""\s*\(Ch\s*\d+\)""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .ifBlank { rawName }
+    }
+
     private fun tileTemperatureArgb(tempC: Float): Int {
         return when {
             tempC >= 26.0f -> 0xFFEF5350.toInt()
@@ -378,10 +414,10 @@ class EcowittTileService : TileService() {
 
     private fun tileHumidityArgb(humidityPct: Float): Int {
         return when {
-            humidityPct < 35f -> 0xFFFFD54F.toInt()
-            humidityPct < 60f -> 0xFF26A69A.toInt()
-            humidityPct < 65f -> 0xFF29B6F6.toInt()
-            else -> 0xFF6366F1.toInt()
+            humidityPct < 35f -> 0xFF60A5FA.toInt()
+            humidityPct < 60f -> 0xFF38BDF8.toInt()
+            humidityPct < 65f -> 0xFF0EA5E9.toInt()
+            else -> 0xFF3B82F6.toInt()
         }
     }
 
@@ -391,7 +427,7 @@ class EcowittTileService : TileService() {
     }
 
     companion object {
-        private const val RESOURCES_VERSION = "ecowitt_tile_v3"
+        private const val RESOURCES_VERSION = "ecowitt_tile_v4"
         private const val ID_REFRESH_TILE = "id_refresh_tile"
     }
 }

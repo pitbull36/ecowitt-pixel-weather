@@ -11,9 +11,9 @@ val WatchSurfaceCard = Color(0xFF111D30)
 val WatchThermalCoral = Color(0xFFEF5350)
 val WatchThermalAmber = Color(0xFFFFD54F)
 val WatchThermalOrange = Color(0xFFFF9800)
-val WatchComfortEmerald = Color(0xFF26A69A)
-val WatchCoolCyan = Color(0xFF4DD0E1)
-val WatchCobaltDrop = Color(0xFF6366F1)
+val WatchComfortEmerald = Color(0xFF38BDF8)
+val WatchCoolCyan = Color(0xFF60A5FA)
+val WatchCobaltDrop = Color(0xFF3B82F6)
 
 private val WatchColorScheme = darkColorScheme(
     primary = WatchCoolCyan,
@@ -36,10 +36,10 @@ fun watchTemperatureColor(tempC: Float): Color {
 
 fun watchHumidityColor(humidityPct: Float): Color {
     return when {
-        humidityPct < 35f -> WatchThermalAmber
-        humidityPct < 60f -> WatchComfortEmerald
-        humidityPct < 65f -> Color(0xFF29B6F6)
-        else -> WatchCobaltDrop
+        humidityPct < 35f -> Color(0xFF60A5FA)
+        humidityPct < 60f -> Color(0xFF38BDF8)
+        humidityPct < 65f -> Color(0xFF0EA5E9)
+        else -> Color(0xFF3B82F6)
     }
 }
 

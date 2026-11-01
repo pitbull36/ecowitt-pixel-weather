@@ -288,13 +288,15 @@ class LocalHistoryStore(private val context: Context) :
     }
 
     fun saveWidgetSnapshotCache(snapshot: HomeAtmosphereSnapshot) {
-        val rawJson = serializeSnapshotJson(snapshot)
+        val synced = loadSettings().applyToSnapshot(snapshot)
+        val rawJson = serializeSnapshotJson(synced)
         prefs.edit().putString("cached_snapshot_json", rawJson).apply()
     }
 
     fun loadWidgetSnapshotCache(): HomeAtmosphereSnapshot? {
         val raw = prefs.getString("cached_snapshot_json", null) ?: return null
-        return deserializeSnapshotJson(raw)
+        val snap = deserializeSnapshotJson(raw) ?: return null
+        return loadSettings().applyToSnapshot(snap)
     }
 
     fun serializeSettingsJson(settings: AppSettings): String {

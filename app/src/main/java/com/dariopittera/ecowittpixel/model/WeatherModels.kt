@@ -318,6 +318,21 @@ data class AppSettings(
     val roomConfigs: Map<String, RoomConfig> = defaultRoomConfigs(),
     val customCriteria: List<CustomAlertCriterion> = defaultCustomCriteria()
 ) {
+    fun applyToSnapshot(snapshot: HomeAtmosphereSnapshot): HomeAtmosphereSnapshot {
+        val syncedRooms = snapshot.rooms.map { room ->
+            val cfg = roomConfigs[room.channelId]
+            if (cfg != null && cfg.customName.isNotBlank()) {
+                room.copy(
+                    roomName = cfg.customName,
+                    archetype = cfg.archetype
+                )
+            } else {
+                room
+            }
+        }
+        return snapshot.copy(rooms = syncedRooms)
+    }
+
     companion object {
         fun defaultRoomConfigs(): Map<String, RoomConfig> = mapOf(
             "gateway" to RoomConfig(

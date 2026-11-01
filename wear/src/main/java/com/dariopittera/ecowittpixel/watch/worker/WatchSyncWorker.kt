@@ -40,9 +40,11 @@ class WatchSyncWorker(
             WearDataLayerBridge.requestSyncFromPhone(applicationContext)
             WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
         } else {
-            val settings = store.loadSettings()
+            val settings = store.loadSettings().copy(demoModeEnabled = false)
             val api = EcowittApiClient(store)
-            val snapshot = api.fetchAtmosphere(settings, SimulationParameters())
+            val snapshot = settings.applyToSnapshot(
+                api.fetchAtmosphere(settings, SimulationParameters())
+            )
             store.saveWidgetSnapshotCache(snapshot)
 
             // Evaluate and fire standalone watch alerts ONLY when disconnected from the phone
