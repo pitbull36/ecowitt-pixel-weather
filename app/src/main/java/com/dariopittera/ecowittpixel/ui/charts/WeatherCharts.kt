@@ -445,6 +445,7 @@ fun PsychrometricComfortScatterChart(
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
     var focusedRoomIdx by remember { mutableStateOf<Int?>(null) }
+    var show24hTrails by remember { mutableStateOf(false) }
 
     fun clampPan(pan: Offset, scale: Float, plotW: Float, plotH: Float): Offset {
         if (scale <= 1.01f) return Offset.Zero
@@ -456,6 +457,67 @@ fun PsychrometricComfortScatterChart(
         )
     }
 
+    fun buildRoomZoneGuidance(room: SensorRoomState): Pair<String, Color> {
+        val t = room.temperatureC
+        val h = room.humidityPct
+        val tempDelta = when {
+            t < 18.5f -> 18.5f - t
+            t > 24.0f -> t - 24.0f
+            else -> 0f
+        }
+        val humDelta = when {
+            h < 35f -> 35f - h
+            h > 60f -> h - 60f
+            else -> 0f
+        }
+        return when {
+            tempDelta == 0f && humDelta == 0f ->
+                "✓ Inside optimal comfort zone (${tempUnit.format(t)}, ${h.toInt()}% RH • score ${room.comfortScore}/100)" to ComfortEmerald
+            h >= 68f ->
+                String.format(
+                    Locale.UK,
+                    "Too humid (%.0f%% RH): reduce humidity by %.0f%% to reach the 35–60%% comfort zone",
+                    h,
+                    h - 60f
+                ) to HumidViolet
+            h < 35f ->
+                String.format(
+                    Locale.UK,
+                    "Dry air (%.0f%% RH): +%.0f%% humidity needed to reach the 35–60%% comfort zone",
+                    h,
+                    35f - h
+                ) to ThermalAmber
+            t < 18.5f && h > 60f ->
+                String.format(
+                    Locale.UK,
+                    "Cool and humid: +%s and −%.0f%% RH needed to reach optimal zone",
+                    tempUnit.format(18.5f - t),
+                    h - 60f
+                ) to CoolCyan
+            t < 18.5f ->
+                String.format(
+                    Locale.UK,
+                    "Cool (%s): +%s warmer needed to enter the 18.5–24°C comfort zone",
+                    tempUnit.format(t),
+                    tempUnit.format(18.5f - t)
+                ) to CoolCyan
+            t > 24.0f ->
+                String.format(
+                    Locale.UK,
+                    "Warm (%s): −%s cooler needed to enter the 18.5–24°C comfort zone",
+                    tempUnit.format(t),
+                    tempUnit.format(t - 24.0f)
+                ) to ThermalCoral
+            else ->
+                String.format(
+                    Locale.UK,
+                    "Slightly humid (%.0f%% RH): −%.0f%% RH needed to enter the 35–60%% comfort zone",
+                    h,
+                    h - 60f
+                ) to CoolCyan
+        }
+    }
+
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -464,14 +526,14 @@ fun PsychrometricComfortScatterChart(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Psychrometric comfort matrix (ASHRAE 55)",
+                    text = "Comfort zone map (temperature vs humidity)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Pinch or double-tap to zoom in, drag to pan, or tap a room pill below to focus.",
+                    text = "Green centre = ideal indoor comfort. Dashed arrows show how far each room is from the target zone.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFB0BEC5)
                 )
@@ -479,11 +541,34 @@ fun PsychrometricComfortScatterChart(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Interactive Zoom Control Pill (- | 1.0x | + | Reset)
+            // Interactive Zoom + 24h Trail Control Pill
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (show24hTrails) Color(0xFF1F3654) else Color(0xFF14243A))
+                        .border(
+                            1.dp,
+                            if (show24hTrails) CoolCyan else Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable {
+                            show24hTrails = !show24hTrails
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = if (show24hTrails) "✓ 24h trail" else "24h trail",
+                        color = if (show24hTrails) CoolCyan else Color(0xFF94A3B8),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 10.sp
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
@@ -546,6 +631,51 @@ fun PsychrometricComfortScatterChart(
         }
 
         Spacer(modifier = Modifier.height(10.dp))
+
+        // Plain-language diagnosis banner for each room (or focused room)
+        val diagnosisRooms = focusedRoomIdx?.let { listOfNotNull(rooms.getOrNull(it)) } ?: rooms
+        Surface(
+            color = Color(0xFF0E1828),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                diagnosisRooms.forEach { r ->
+                    val (guidanceText, guidanceCol) = buildRoomZoneGuidance(r)
+                    val seriesCol = channelSeriesColor(r, allRooms)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(seriesCol)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${r.roomName.substringBefore(" (")}: ",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = guidanceText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = guidanceCol
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Interactive Room Legend Strip (tap any room to focus/highlight its trail, or All rooms)
         Row(
@@ -775,7 +905,85 @@ fun PsychrometricComfortScatterChart(
                 right = leftPad + plotW,
                 bottom = topPad + plotH
             ) {
-                // Mould risk upper band (> 68% RH)
+                // 1. Cool zone (< 18.5°C, left region)
+                val coolTopLeft = mapPt(baseMinTempC, 68f)
+                val coolBottomRight = mapPt(18.5f, 35f)
+                drawRect(
+                    color = CoolCyan.copy(alpha = 0.08f),
+                    topLeft = coolTopLeft,
+                    size = Size(
+                        (coolBottomRight.x - coolTopLeft.x).coerceAtLeast(0f),
+                        (coolBottomRight.y - coolTopLeft.y).coerceAtLeast(0f)
+                    )
+                )
+                val coolLbl = textMeasurer.measure(
+                    text = "Cool (<18.5°C)",
+                    style = TextStyle(color = CoolCyan.copy(alpha = 0.85f), fontSize = 9.sp, fontWeight = FontWeight.Medium)
+                )
+                drawText(
+                    coolLbl,
+                    topLeft = Offset(
+                        (coolTopLeft.x + 6f).coerceAtLeast(leftPad + 6f),
+                        ((coolTopLeft.y + coolBottomRight.y) / 2f - coolLbl.size.height / 2f)
+                            .coerceIn(topPad + 24f, topPad + plotH - 28f)
+                    )
+                )
+
+                // 2. Warm zone (> 24.0°C, right region)
+                val warmTopLeft = mapPt(24.0f, 68f)
+                val warmBottomRight = mapPt(baseMaxTempC, 35f)
+                drawRect(
+                    color = ThermalCoral.copy(alpha = 0.08f),
+                    topLeft = warmTopLeft,
+                    size = Size(
+                        (warmBottomRight.x - warmTopLeft.x).coerceAtLeast(0f),
+                        (warmBottomRight.y - warmTopLeft.y).coerceAtLeast(0f)
+                    )
+                )
+                val warmLbl = textMeasurer.measure(
+                    text = "Warm (>24°C)",
+                    style = TextStyle(color = ThermalCoral.copy(alpha = 0.85f), fontSize = 9.sp, fontWeight = FontWeight.Medium)
+                )
+                drawText(
+                    warmLbl,
+                    topLeft = Offset(
+                        (warmBottomRight.x - warmLbl.size.width - 6f).coerceAtMost(leftPad + plotW - warmLbl.size.width - 6f),
+                        ((warmTopLeft.y + warmBottomRight.y) / 2f - warmLbl.size.height / 2f)
+                            .coerceIn(topPad + 24f, topPad + plotH - 28f)
+                    )
+                )
+
+                // 3. Dry air lower band (< 35% RH)
+                val dryTopLeft = mapPt(baseMinTempC, 35f)
+                val dryBottomRight = mapPt(baseMaxTempC, baseMinHum)
+                drawRect(
+                    color = ThermalAmber.copy(alpha = 0.10f),
+                    topLeft = dryTopLeft,
+                    size = Size(
+                        (dryBottomRight.x - dryTopLeft.x).coerceAtLeast(0f),
+                        (dryBottomRight.y - dryTopLeft.y).coerceAtLeast(0f)
+                    )
+                )
+                drawLine(
+                    color = ThermalAmber.copy(alpha = 0.45f),
+                    start = Offset(dryTopLeft.x, dryTopLeft.y),
+                    end = Offset(dryBottomRight.x, dryTopLeft.y),
+                    strokeWidth = 1.2f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+                )
+                val dryLbl = textMeasurer.measure(
+                    text = "Dry air (<35% RH)",
+                    style = TextStyle(color = ThermalAmber.copy(alpha = 0.9f), fontSize = 9.sp, fontWeight = FontWeight.Medium)
+                )
+                drawText(
+                    dryLbl,
+                    topLeft = Offset(
+                        (dryTopLeft.x + 8f).coerceAtLeast(leftPad + 6f),
+                        (dryBottomRight.y - dryLbl.size.height - 4f).coerceIn(topPad + 4f, topPad + plotH - dryLbl.size.height - 4f)
+                    )
+                )
+
+                // 4. Mould risk upper band (> 68% RH)
                 val mouldTopLeft = mapPt(baseMinTempC, baseMaxHum)
                 val mouldBottomRight = mapPt(baseMaxTempC, 68f)
                 drawRect(
@@ -794,7 +1002,7 @@ fun PsychrometricComfortScatterChart(
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
                 )
                 val mouldLbl = textMeasurer.measure(
-                    text = "Mould risk (>68% RH)",
+                    text = "Humid / mould risk (>68% RH)",
                     style = TextStyle(color = Color(0xFFD8B4FE), fontSize = 9.sp, fontWeight = FontWeight.Medium)
                 )
                 drawText(
@@ -805,74 +1013,92 @@ fun PsychrometricComfortScatterChart(
                     )
                 )
 
-                // ASHRAE 55 Optimal Comfort Polygon (18.5..24.2°C, 38..58% RH)
-                val c1 = mapPt(18.5f, 38f)
-                val c2 = mapPt(24.2f, 38f)
-                val c3 = mapPt(23.5f, 58f)
-                val c4 = mapPt(18.0f, 58f)
-                val comfortPoly = Path().apply {
-                    moveTo(c1.x, c1.y)
-                    lineTo(c2.x, c2.y)
-                    lineTo(c3.x, c3.y)
-                    lineTo(c4.x, c4.y)
-                    close()
-                }
-                drawPath(comfortPoly, color = ComfortEmerald.copy(alpha = 0.22f))
-                drawPath(comfortPoly, color = ComfortEmerald, style = Stroke(width = 2.4f))
+                // 5. ASHRAE 55 Optimal Comfort Zone Box (18.5..24.0°C, 35..60% RH)
+                val comfortTopLeft = mapPt(18.5f, 60f)
+                val comfortBottomRight = mapPt(24.0f, 35f)
+                val comfortRectSize = Size(
+                    (comfortBottomRight.x - comfortTopLeft.x).coerceAtLeast(4f),
+                    (comfortBottomRight.y - comfortTopLeft.y).coerceAtLeast(4f)
+                )
+                drawRoundRect(
+                    color = ComfortEmerald.copy(alpha = 0.22f),
+                    topLeft = comfortTopLeft,
+                    size = comfortRectSize,
+                    cornerRadius = CornerRadius(10f, 10f)
+                )
+                drawRoundRect(
+                    color = ComfortEmerald,
+                    topLeft = comfortTopLeft,
+                    size = comfortRectSize,
+                    cornerRadius = CornerRadius(10f, 10f),
+                    style = Stroke(width = 2.4f)
+                )
 
                 val zoneLabel = textMeasurer.measure(
-                    text = "Optimal comfort zone",
-                    style = TextStyle(color = ComfortEmerald, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    text = "✓ Optimal comfort (18.5–24°C, 35–60%)",
+                    style = TextStyle(color = ComfortEmerald, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
                 )
                 drawText(
                     zoneLabel,
                     topLeft = Offset(
-                        (c4.x + 6f).coerceIn(leftPad + 4f, leftPad + plotW - zoneLabel.size.width - 4f),
-                        (c4.y + 6f).coerceIn(topPad + 4f, topPad + plotH - zoneLabel.size.height - 4f)
+                        (comfortTopLeft.x + 6f).coerceIn(leftPad + 4f, leftPad + plotW - zoneLabel.size.width - 4f),
+                        (comfortTopLeft.y + 5f).coerceIn(topPad + 4f, topPad + plotH - zoneLabel.size.height - 4f)
                     )
                 )
 
                 // Track placed label boxes for smart collision avoidance
                 val placedLabelRects = mutableListOf<Rect>()
 
-                // Draw 24h trails & live position for each room
+                // Draw optional 24h trails, target-zone guidance arrows, and live room pins
                 rooms.forEachIndexed { idx, room ->
                     val isDimmed = focusedRoomIdx != null && focusedRoomIdx != idx
                     val alphaMul = if (isDimmed) 0.25f else 1f
                     val color = channelSeriesColor(room, allRooms)
                     val recent24h = room.history.takeLast(32)
-                    if (recent24h.size >= 2) {
+                    if ((show24hTrails || focusedRoomIdx == idx) && recent24h.size >= 2) {
                         val trailPath = Path()
                         recent24h.forEachIndexed { ptIdx, pt ->
                             val p = mapPt(pt.temperatureC, pt.humidityPct)
                             if (ptIdx == 0) trailPath.moveTo(p.x, p.y) else trailPath.lineTo(p.x, p.y)
-                            if (zoomScale >= 1.6f && !isDimmed && ptIdx % 2 == 0) {
-                                drawCircle(
-                                    color = color.copy(alpha = 0.55f),
-                                    radius = 3.2f,
-                                    center = p
-                                )
-                            }
                         }
                         drawPath(
                             path = trailPath,
-                            color = color.copy(alpha = 0.52f * alphaMul),
-                            style = Stroke(width = if (focusedRoomIdx == idx) 3.8f else 2.6f, cap = StrokeCap.Round)
+                            color = color.copy(alpha = 0.45f * alphaMul),
+                            style = Stroke(width = 2.2f, cap = StrokeCap.Round)
                         )
                     }
 
                     val livePos = mapPt(room.temperatureC, room.humidityPct)
+
+                    // If outside the 18.5..24.0°C / 35..60% RH optimal box, draw a dashed arrow toward the nearest target point
+                    val nearestTargetTemp = room.temperatureC.coerceIn(18.5f, 24.0f)
+                    val nearestTargetHum = room.humidityPct.coerceIn(35f, 60f)
+                    val isOutsideOptimal = kotlin.math.abs(room.temperatureC - nearestTargetTemp) > 0.1f ||
+                        kotlin.math.abs(room.humidityPct - nearestTargetHum) > 0.5f
+
+                    if (isOutsideOptimal && !isDimmed) {
+                        val targetPos = mapPt(nearestTargetTemp, nearestTargetHum)
+                        drawLine(
+                            color = color.copy(alpha = 0.72f),
+                            start = livePos,
+                            end = targetPos,
+                            strokeWidth = 2.0f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(7f, 5f))
+                        )
+                        drawCircle(
+                            color = ComfortEmerald,
+                            radius = 4.2f,
+                            center = targetPos
+                        )
+                    }
+
                     drawCircle(color = color.copy(alpha = 0.32f * alphaMul), radius = 15f, center = livePos)
                     drawCircle(color = Color(0xFF0E1828), radius = 8.5f, center = livePos)
                     drawCircle(color = color.copy(alpha = alphaMul), radius = 6.5f, center = livePos)
 
                     if (!isDimmed) {
                         val shortName = room.roomName.substringBefore(" (")
-                        val labelText = if (zoomScale >= 1.6f) {
-                            "$shortName (${tempUnit.format(room.temperatureC)}, ${room.humidityPct.toInt()}%)"
-                        } else {
-                            shortName
-                        }
+                        val labelText = "$shortName • ${tempUnit.format(room.temperatureC, decimals = 1)} / ${room.humidityPct.toInt()}%"
                         val tag = textMeasurer.measure(
                             text = labelText,
                             style = TextStyle(
