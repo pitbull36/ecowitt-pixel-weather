@@ -328,7 +328,7 @@ object WearDataLayerBridge {
             // Fall through to fast local Wi-Fi / UDP peer check
         }
 
-        // Fast fallback 1: check cached Pixel 10 LAN IP if on same Wi-Fi or Bluetooth proxy
+        // Fast fallback 1: check cached Android phone LAN IP if on same Wi-Fi or Bluetooth proxy
         val savedPhoneIp = loadPhoneLanIp(context)
         if (!savedPhoneIp.isNullOrBlank()) {
             val lanPair = fetchPhoneSyncOverHttp(context, store, savedPhoneIp, timeoutMs = 900)
@@ -378,7 +378,7 @@ object WearDataLayerBridge {
 
     /**
      * Discovers either:
-     * 1. The Pixel 10 phone (`http://<ip>:8765/ecowitt_sync`) via UDP broadcast or subnet scan,
+     * 1. The paired Android phone (`http://<ip>:8765/ecowitt_sync`) via UDP broadcast or subnet scan,
      *    returning the user's custom room names, archetypes, Cloud keys, and live telemetry.
      * 2. The Ecowitt GW1200 gateway (`http://<ip>/get_livedata_info`) directly over home Wi-Fi
      *    or Wear OS Bluetooth proxy.

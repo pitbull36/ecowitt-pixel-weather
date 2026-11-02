@@ -1,6 +1,7 @@
 package com.dariopittera.ecowittpixel.watch
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -15,10 +16,15 @@ import androidx.compose.runtime.getValue
 import androidx.wear.ambient.AmbientLifecycleObserver
 import com.dariopittera.ecowittpixel.watch.ui.EcowittWatchTheme
 import com.dariopittera.ecowittpixel.watch.ui.WatchRootScreen
+import com.dariopittera.ecowittpixel.watch.ui.createNormalizedWatchContext
 
 class WatchMainActivity : ComponentActivity() {
 
     private val viewModel: WatchViewModel by viewModels()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(createNormalizedWatchContext(newBase))
+    }
 
     private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
         override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {

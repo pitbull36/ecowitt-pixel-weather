@@ -1,12 +1,16 @@
 package com.dariopittera.ecowittpixel.ui.theme
 
-import android.os.Build
+import android.content.Context
+import android.content.res.Configuration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import kotlin.math.roundToInt
 
 val PixelSkyNavy = Color(0xFF0B1320)
 val PixelSurfaceCard = Color(0xFF131F33)
@@ -69,23 +73,49 @@ fun humidityAccentColor(humidityPct: Float): Color {
     }
 }
 
+/**
+ * Canonical reference width in dp used across all Android phones so that any two devices
+ * render with identical proportions, card sizes, and text wrapping regardless of user
+ * "Display size" zoom or "Font size" accessibility settings in Android OS Settings.
+ */
+private const val CANONICAL_PHONE_WIDTH_DP = 411f
+
+fun createNormalizedPhoneContext(base: Context): Context {
+    val metrics = base.resources.displayMetrics
+    val shortestPx = minOf(metrics.widthPixels, metrics.heightPixels)
+    if (shortestPx <= 0) return base
+    val targetDensity = (shortestPx / CANONICAL_PHONE_WIDTH_DP).coerceIn(1.5f, 4.5f)
+    val targetDpi = (targetDensity * 160f).roundToInt()
+    val config = Configuration(base.resources.configuration).apply {
+        fontScale = 1.0f
+        densityDpi = targetDpi
+    }
+    return base.createConfigurationContext(config)
+}
+
 @Composable
 fun EcowittPixelTheme(
-    useDynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val colorScheme = if (useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        dynamicDarkColorScheme(context).copy(
-            background = PixelSkyNavy,
-            surface = PixelSurfaceCard
-        )
+    val currentDensity = LocalDensity.current
+    val displayMetrics = context.resources.displayMetrics
+    val shortestWidthPx = minOf(displayMetrics.widthPixels, displayMetrics.heightPixels).toFloat()
+    val normalizedDensity = if (shortestWidthPx > 0f) {
+        (shortestWidthPx / CANONICAL_PHONE_WIDTH_DP).coerceIn(1.5f, 4.5f)
     } else {
-        AtmosphericColorScheme
+        currentDensity.density
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        content = content
-    )
+    CompositionLocalProvider(
+        LocalDensity provides Density(
+            density = normalizedDensity,
+            fontScale = 1.0f
+        )
+    ) {
+        MaterialTheme(
+            colorScheme = AtmosphericColorScheme,
+            content = content
+        )
+    }
 }

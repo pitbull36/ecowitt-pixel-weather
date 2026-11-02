@@ -1,12 +1,12 @@
-# Ecowitt atmosphere for Google Pixel 10
+# Ecowitt atmosphere for Android and Wear OS
 
-A native Kotlin and Jetpack Compose Android application designed for the Google Pixel 10 and your Ecowitt GW1200 weather station with external WH31 temperature and humidity sensors.
+A native Kotlin and Jetpack Compose Android and Wear OS application designed for any Android phone, any Wear OS smartwatch, and your Ecowitt GW1200 weather station with external WH31 temperature and humidity sensors.
 
 ## Features
 
 1. **Interactive 3D isometric room and outdoor dioramas (`RoomDioramaCanvas.kt`)**
    - Supports six room and outdoor presets: **Living room**, **Master bedroom**, **Home office**, **Kitchen and dining**, **Bathroom**, and **Balcony and garden**.
-   - **Pixel 10 gyroscope tilt parallax and touch orbit**: gently tilts the 3D cutaway room as you move your phone, or drag with your finger to orbit the camera.
+   - **Gyroscope tilt parallax and touch orbit**: gently tilts the 3D cutaway room as you move your phone, or drag with your finger to orbit the camera.
    - **Android AGSL atmospheric shader**: renders thermal convection waves, humidity mist plumes, and day or night sky lighting.
    - **Dynamic particle systems**: water-vapour droplet density scales with relative humidity, thermal waves rise from the floor, and window panes develop condensation droplets when dew point approaches surface temperatures.
    - **Whole-home 3D stack toggle**: view a single room in detail or switch to a stacked multi-floor 3D cutaway of all sensors at once.
@@ -17,9 +17,9 @@ A native Kotlin and Jetpack Compose Android application designed for the Google 
    - **GW1200 barometric forecast**: tracks 3-hour pressure trends (`hPa` or `inHg`) to forecast approaching rain fronts or clearing skies.
 
 3. **Comprehensive climate analytics (`WeatherCharts.kt`)**
-   - **Multi-room cubic spline chart**: smooth overlaid curves for temperature, humidity, dew point, and pressure over 24 hours or 7 days with finger scrubbing and Pixel haptic ticks.
+   - **Multi-room cubic spline chart**: smooth overlaid curves for temperature, humidity, dew point, and pressure over 24 hours or 7 days with finger scrubbing and haptic ticks.
    - **Psychrometric comfort matrix**: 2D scatter plot of temperature vs humidity showing the ASHRAE 55 comfort polygon, mould risk boundary, and 24-hour sensor trails.
-   - **Pixel Weather daily range bars**: 7-day min-to-max gradient bars for temperature and humidity.
+   - **Daily range bars**: 7-day min-to-max gradient bars for temperature and humidity.
    - **7-day × 24-hour calendar heatmap**: visualises hourly thermal or moisture patterns across the week, plus one-tap **CSV export**.
 
 4. **Hybrid GW1200 local LAN and Ecowitt Cloud API v3 engine (`EcowittApiClient.kt`)**

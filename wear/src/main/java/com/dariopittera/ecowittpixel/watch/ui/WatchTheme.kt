@@ -1,9 +1,16 @@
 package com.dariopittera.ecowittpixel.watch.ui
 
+import android.content.Context
+import android.content.res.Configuration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import kotlin.math.roundToInt
 
 val WatchOledBlack = Color(0xFF000000)
 val WatchDeepNavy = Color(0xFF070E1A)
@@ -43,10 +50,42 @@ fun watchHumidityColor(humidityPct: Float): Color {
     }
 }
 
+private const val CANONICAL_WATCH_WIDTH_DP = 192f
+
+fun createNormalizedWatchContext(base: Context): Context {
+    val metrics = base.resources.displayMetrics
+    val shortestPx = minOf(metrics.widthPixels, metrics.heightPixels)
+    if (shortestPx <= 0) return base
+    val targetDensity = (shortestPx / CANONICAL_WATCH_WIDTH_DP).coerceIn(1.2f, 3.5f)
+    val targetDpi = (targetDensity * 160f).roundToInt()
+    val config = Configuration(base.resources.configuration).apply {
+        fontScale = 1.0f
+        densityDpi = targetDpi
+    }
+    return base.createConfigurationContext(config)
+}
+
 @Composable
 fun EcowittWatchTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = WatchColorScheme,
-        content = content
-    )
+    val context = LocalContext.current
+    val currentDensity = LocalDensity.current
+    val displayMetrics = context.resources.displayMetrics
+    val shortestWidthPx = minOf(displayMetrics.widthPixels, displayMetrics.heightPixels).toFloat()
+    val normalizedDensity = if (shortestWidthPx > 0f) {
+        (shortestWidthPx / CANONICAL_WATCH_WIDTH_DP).coerceIn(1.2f, 3.5f)
+    } else {
+        currentDensity.density
+    }
+
+    CompositionLocalProvider(
+        LocalDensity provides Density(
+            density = normalizedDensity,
+            fontScale = 1.0f
+        )
+    ) {
+        MaterialTheme(
+            colorScheme = WatchColorScheme,
+            content = content
+        )
+    }
 }

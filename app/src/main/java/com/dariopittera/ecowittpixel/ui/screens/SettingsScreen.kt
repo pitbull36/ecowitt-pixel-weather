@@ -811,7 +811,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Pixel gyroscope 3D tilt parallax", color = Color.White)
+                        Text("Gyroscope 3D tilt parallax", color = Color.White)
                         Text(
                             "Tilts the 3D room diorama gently as you move your phone",
                             style = MaterialTheme.typography.bodySmall,

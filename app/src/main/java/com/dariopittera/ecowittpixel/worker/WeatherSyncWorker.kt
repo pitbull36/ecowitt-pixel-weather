@@ -354,7 +354,7 @@ class WeatherSyncWorker(
             }
 
             // If user explicitly tapped "Test active notifications now" and no threshold is currently breached,
-            // send a verification notification confirming the alert channel is active on their Pixel 10.
+            // send a verification notification confirming the alert channel is active on their Android device.
             if (forceTest && triggeredSummaries.isEmpty() && canPost) {
                 val leadRoom = snapshot.primaryGatewayRoom ?: snapshot.rooms.firstOrNull()
                 val summary = if (leadRoom != null) {

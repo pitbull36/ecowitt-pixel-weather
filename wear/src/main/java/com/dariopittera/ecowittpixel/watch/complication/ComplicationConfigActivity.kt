@@ -42,6 +42,7 @@ import com.dariopittera.ecowittpixel.watch.ui.WatchComfortEmerald
 import com.dariopittera.ecowittpixel.watch.ui.WatchCoolCyan
 import com.dariopittera.ecowittpixel.watch.ui.WatchOledBlack
 import com.dariopittera.ecowittpixel.watch.ui.WatchSurfaceCard
+import com.dariopittera.ecowittpixel.watch.ui.createNormalizedWatchContext
 
 enum class ComplicationMetricOption(val id: String, val label: String) {
     TEMP_AND_HUMIDITY("temp_rh", "Temperature and RH"),
@@ -98,6 +99,10 @@ object ComplicationConfigStore {
 }
 
 class ComplicationConfigActivity : ComponentActivity() {
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(createNormalizedWatchContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

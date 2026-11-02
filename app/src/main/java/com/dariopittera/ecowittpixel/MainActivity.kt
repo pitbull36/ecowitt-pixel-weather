@@ -1,6 +1,7 @@
 package com.dariopittera.ecowittpixel
 
 import android.Manifest
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -36,6 +37,7 @@ import com.dariopittera.ecowittpixel.ui.theme.CoolCyan
 import com.dariopittera.ecowittpixel.ui.theme.EcowittPixelTheme
 import com.dariopittera.ecowittpixel.ui.theme.PixelSkyNavy
 import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceCard
+import com.dariopittera.ecowittpixel.ui.theme.createNormalizedPhoneContext
 
 class MainActivity : ComponentActivity() {
 
@@ -44,6 +46,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private val viewModel: WeatherViewModel by viewModels()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(createNormalizedPhoneContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

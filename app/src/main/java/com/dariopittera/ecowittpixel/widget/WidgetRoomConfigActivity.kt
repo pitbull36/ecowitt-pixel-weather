@@ -3,6 +3,7 @@ package com.dariopittera.ecowittpixel.widget
 import android.app.Activity
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -53,6 +54,7 @@ import com.dariopittera.ecowittpixel.ui.theme.CoolCyan
 import com.dariopittera.ecowittpixel.ui.theme.EcowittPixelTheme
 import com.dariopittera.ecowittpixel.ui.theme.PixelSkyNavy
 import com.dariopittera.ecowittpixel.ui.theme.PixelSurfaceCard
+import com.dariopittera.ecowittpixel.ui.theme.createNormalizedPhoneContext
 import com.dariopittera.ecowittpixel.worker.WeatherSyncWorker
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -66,6 +68,10 @@ import kotlinx.coroutines.launch
  * circular temperature + humidity bezel dial live.
  */
 class WidgetRoomConfigActivity : ComponentActivity() {
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(createNormalizedPhoneContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -294,7 +294,7 @@ fun AnalyticsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 4. Pixel Weather Style 7-Day Min/Max Range Bars
+            // 4. 7-Day Min/Max Range Bars
             Card(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),

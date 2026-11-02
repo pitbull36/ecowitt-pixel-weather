@@ -274,7 +274,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             _statusBanner.value = if (results.isNotEmpty()) {
                 "Dispatched ${results.size} notification(s): ${results.first()}"
             } else {
-                "Notification test dispatched to your Pixel status bar"
+                "Notification test dispatched to your device status bar"
             }
         }
     }
