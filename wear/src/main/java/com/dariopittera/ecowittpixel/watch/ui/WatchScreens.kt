@@ -357,21 +357,38 @@ private fun WatchRoomDetailScreen(
         runCatching { focusRequester.requestFocus() }
     }
 
-    val historyWindow = remember(room.history, room.lastUpdatedMs, isWeekRange) {
-        val windowDurationMs = if (isWeekRange) {
-            7L * 24L * 3600L * 1000L
-        } else {
-            24L * 3600L * 1000L
+    val windowDurationMs = if (isWeekRange) {
+        7L * 24L * 3600L * 1000L
+    } else {
+        24L * 3600L * 1000L
+    }
+    val nowAnchorMs = remember(room.lastUpdatedMs, room.history.size, isWeekRange) {
+        maxOf(System.currentTimeMillis(), room.lastUpdatedMs)
+    }
+    val windowStartMs = nowAnchorMs - windowDurationMs
+
+    val historyWindow = remember(room.history, windowStartMs, nowAnchorMs) {
+        val filtered = room.history
+            .filter { it.timestampMs in windowStartMs..nowAnchorMs }
+            .sortedBy { it.timestampMs }
+            .toMutableList()
+        // Always include the live current point at the right edge of the window
+        if (filtered.isEmpty() || (nowAnchorMs - filtered.last().timestampMs) > 90_000L) {
+            filtered.add(
+                com.dariopittera.ecowittpixel.model.HistoricalPoint(
+                    timestampMs = nowAnchorMs,
+                    temperatureC = room.temperatureC,
+                    humidityPct = room.humidityPct,
+                    pressureHpa = room.relativePressureHpa
+                )
+            )
         }
-        val cutoff = System.currentTimeMillis() - windowDurationMs
-        room.history.filter { it.timestampMs >= cutoff }.ifEmpty { room.history }
+        filtered
     }
 
-    val isLiveNow = scrubFraction >= 0.97f || historyWindow.isEmpty()
-    val minHistTs = remember(historyWindow) { historyWindow.minOfOrNull { it.timestampMs } ?: 0L }
-    val maxHistTs = remember(historyWindow) { historyWindow.maxOfOrNull { it.timestampMs } ?: 0L }
-    val histSpanMs = (maxHistTs - minHistTs).coerceAtLeast(60_000L)
-    val targetScrubTs = minHistTs + (scrubFraction.coerceIn(0f, 1f) * histSpanMs).toLong()
+    val isLiveNow = scrubFraction >= 0.985f || historyWindow.isEmpty()
+    // Anchor the scrub timeline strictly to the full 24h (or 7d) clock span [now - 24h .. now]
+    val targetScrubTs = windowStartMs + (scrubFraction.coerceIn(0f, 1f) * windowDurationMs).toLong()
 
     val scrubbedPoint = if (!isLiveNow && historyWindow.isNotEmpty()) {
         historyWindow.minByOrNull { abs(it.timestampMs - targetScrubTs) }
@@ -391,22 +408,35 @@ private fun WatchRoomDetailScreen(
     val humColor = watchHumidityColor(displayedRoom.humidityPct)
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.UK) }
     val dayTimeFmt = remember { SimpleDateFormat("EEE HH:mm", Locale.UK) }
-    val timeBadgeText = if (scrubbedPoint != null) {
-        val hoursAgo = ((System.currentTimeMillis() - scrubbedPoint.timestampMs) / 3600_000f).coerceAtLeast(0.1f)
+    val timeBadgeText = if (!isLiveNow && scrubbedPoint != null) {
+        val targetHoursAgo = ((nowAnchorMs - targetScrubTs) / 3600_000f).coerceAtLeast(0.1f)
+        val pointHoursAgo = ((nowAnchorMs - scrubbedPoint.timestampMs) / 3600_000f).coerceAtLeast(0.1f)
+        // If there is a recording gap > 45 min, show the scrubbed target time while displaying the nearest recorded sample
+        val displayTs = if (abs(scrubbedPoint.timestampMs - targetScrubTs) <= 45 * 60_000L) {
+            scrubbedPoint.timestampMs
+        } else {
+            targetScrubTs
+        }
+        val hoursAgo = if (displayTs == scrubbedPoint.timestampMs) pointHoursAgo else targetHoursAgo
         val hoursStr = if (hoursAgo < 10f) {
             String.format(Locale.UK, "-%.1fh", hoursAgo)
         } else {
             String.format(Locale.UK, "-%dh", hoursAgo.roundToInt())
         }
         val clockStr = if (isWeekRange && hoursAgo >= 24f) {
-            dayTimeFmt.format(Date(scrubbedPoint.timestampMs))
+            dayTimeFmt.format(Date(displayTs))
         } else {
-            timeFmt.format(Date(scrubbedPoint.timestampMs))
+            timeFmt.format(Date(displayTs))
         }
         "$clockStr ($hoursStr)"
     } else {
-        val rangeLabel = if (isWeekRange) "1w scrub" else "24h scrub"
-        "Live now • $rangeLabel"
+        val maxHumInWindow = historyWindow.maxOfOrNull { it.humidityPct }?.roundToInt()
+        val rangeLabel = if (isWeekRange) "1w" else "24h"
+        if (maxHumInWindow != null) {
+            "Live • $rangeLabel peak ${maxHumInWindow}% RH"
+        } else {
+            "Live now • $rangeLabel scrub"
+        }
     }
 
     Box(
@@ -513,6 +543,8 @@ private fun WatchRoomDetailScreen(
                 if (historyWindow.size >= 2) {
                     WatchMini24hSparkline(
                         points = historyWindow,
+                        windowStartMs = windowStartMs,
+                        windowDurationMs = windowDurationMs,
                         scrubFraction = scrubFraction,
                         tempColor = tempColor,
                         humColor = humColor,
@@ -544,6 +576,8 @@ private fun WatchRoomDetailScreen(
 @Composable
 private fun WatchMini24hSparkline(
     points: List<com.dariopittera.ecowittpixel.model.HistoricalPoint>,
+    windowStartMs: Long,
+    windowDurationMs: Long,
     scrubFraction: Float,
     tempColor: Color,
     humColor: Color,
@@ -553,19 +587,19 @@ private fun WatchMini24hSparkline(
         if (points.size < 2) return@Canvas
         val minT = (points.minOf { it.temperatureC } - 0.5f)
         val maxT = (points.maxOf { it.temperatureC } + 0.5f).coerceAtLeast(minT + 1f)
-        val minTs = points.first().timestampMs
-        val maxTs = points.last().timestampMs
-        val spanMs = (maxTs - minTs).coerceAtLeast(60_000L)
-        val maxGapMs = 150L * 60_000L
+        val minH = (points.minOf { it.humidityPct } - 2f).coerceAtLeast(0f)
+        val maxH = (points.maxOf { it.humidityPct } + 2f).coerceAtLeast(minH + 5f)
+        val spanMs = windowDurationMs.coerceAtLeast(60_000L)
+        val maxGapMs = if (windowDurationMs > 24L * 3600_000L) 6L * 3600_000L else 150L * 60_000L
 
         val tempPath = Path()
         val humPath = Path()
 
         points.forEachIndexed { i, pt ->
-            val timeFrac = ((pt.timestampMs - minTs).toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+            val timeFrac = ((pt.timestampMs - windowStartMs).toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
             val x = timeFrac * size.width
             val yTemp = size.height - ((pt.temperatureC - minT) / (maxT - minT)).coerceIn(0f, 1f) * size.height
-            val yHum = size.height - (pt.humidityPct / 100f).coerceIn(0f, 1f) * size.height
+            val yHum = size.height - ((pt.humidityPct - minH) / (maxH - minH)).coerceIn(0f, 1f) * size.height
             if (i == 0 || (pt.timestampMs - points[i - 1].timestampMs) > maxGapMs) {
                 tempPath.moveTo(x, yTemp)
                 humPath.moveTo(x, yHum)
@@ -575,20 +609,25 @@ private fun WatchMini24hSparkline(
             }
         }
 
-        drawPath(humPath, color = humColor.copy(alpha = 0.65f), style = Stroke(width = 1.8f))
+        drawPath(humPath, color = humColor.copy(alpha = 0.72f), style = Stroke(width = 1.8f))
         drawPath(tempPath, color = tempColor, style = Stroke(width = 2.4f))
 
-        val targetTs = minTs + (scrubFraction.coerceIn(0f, 1f) * spanMs).toLong()
+        val targetTs = windowStartMs + (scrubFraction.coerceIn(0f, 1f) * spanMs).toLong()
         val activePt = points.minByOrNull { abs(it.timestampMs - targetTs) } ?: points.last()
-        val activeTimeFrac = ((activePt.timestampMs - minTs).toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
-        val scrubX = activeTimeFrac * size.width
+        val scrubX = scrubFraction.coerceIn(0f, 1f) * size.width
         val activeY = size.height - ((activePt.temperatureC - minT) / (maxT - minT)).coerceIn(0f, 1f) * size.height
+        val activeHumY = size.height - ((activePt.humidityPct - minH) / (maxH - minH)).coerceIn(0f, 1f) * size.height
 
         drawLine(
             color = Color.White.copy(alpha = 0.65f),
             start = Offset(scrubX, 0f),
             end = Offset(scrubX, size.height),
             strokeWidth = 1.4f
+        )
+        drawCircle(
+            color = humColor,
+            radius = 3.2f,
+            center = Offset(scrubX, activeHumY)
         )
         drawCircle(
             color = tempColor,

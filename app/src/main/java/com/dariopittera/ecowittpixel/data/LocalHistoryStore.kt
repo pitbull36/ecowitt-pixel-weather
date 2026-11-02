@@ -503,6 +503,41 @@ class LocalHistoryStore(private val context: Context) :
         }
     }
 
+    fun saveCloudBackfillTimestamp(timestampMs: Long) {
+        prefs.edit().putLong("last_cloud_backfill_ms", timestampMs).apply()
+    }
+
+    fun loadCloudBackfillTimestamp(): Long {
+        return prefs.getLong("last_cloud_backfill_ms", 0L)
+    }
+
+    private fun downsamplePreservingExtrema(
+        points: List<HistoricalPoint>,
+        targetBuckets: Int
+    ): List<HistoricalPoint> {
+        if (points.size <= targetBuckets * 2) return points
+        val out = ArrayList<HistoricalPoint>(targetBuckets * 2 + 2)
+        val bucketSize = (points.size.toFloat() / targetBuckets).coerceAtLeast(1f)
+        for (b in 0 until targetBuckets) {
+            val startIdx = (b * bucketSize).toInt().coerceIn(0, points.lastIndex)
+            val endIdx = (((b + 1) * bucketSize).toInt() - 1).coerceIn(startIdx, points.lastIndex)
+            val slice = points.subList(startIdx, endIdx + 1)
+            if (slice.isEmpty()) continue
+            val minHumPt = slice.minByOrNull { it.humidityPct }!!
+            val maxHumPt = slice.maxByOrNull { it.humidityPct }!!
+            val minTempPt = slice.minByOrNull { it.temperatureC }!!
+            val maxTempPt = slice.maxByOrNull { it.temperatureC }!!
+            val unique = linkedSetOf(slice.first(), minHumPt, maxHumPt, minTempPt, maxTempPt, slice.last())
+                .sortedBy { it.timestampMs }
+            for (pt in unique) {
+                if (out.isEmpty() || out.last().timestampMs != pt.timestampMs) {
+                    out.add(pt)
+                }
+            }
+        }
+        return out
+    }
+
     fun serializeSnapshotJson(snapshot: HomeAtmosphereSnapshot): String {
         val nowMs = System.currentTimeMillis()
         val cutoff7d = nowMs - 7L * 24L * 3600L * 1000L
@@ -535,25 +570,26 @@ class LocalHistoryStore(private val context: Context) :
                     if (room.pressureTrend3hHpa != null) {
                         put("pressureTrend3hHpa", room.pressureTrend3hHpa.toDouble())
                     }
-                    // Preserve both 7-day (1 week) history and dense 24h history for watch scrubbing
+                    // Preserve extrema (min/max humidity and temperature peaks) across both 7d and 24h windows
                     val olderWeek = room.history.filter { it.timestampMs in cutoff7d until cutoff24h }
                     val recent24h = room.history.filter { it.timestampMs >= cutoff24h }.ifEmpty {
-                        room.history.takeLast(48)
+                        room.history.takeLast(96)
                     }
                     val sampledPts = ArrayList<HistoricalPoint>()
                     if (olderWeek.isNotEmpty()) {
-                        val weekStep = (olderWeek.size / 60).coerceAtLeast(1)
-                        for (i in olderWeek.indices step weekStep) {
-                            sampledPts.add(olderWeek[i])
-                        }
+                        sampledPts.addAll(downsamplePreservingExtrema(olderWeek, targetBuckets = 42))
                     }
                     if (recent24h.isNotEmpty()) {
-                        val dayStep = (recent24h.size / 48).coerceAtLeast(1)
-                        for (i in recent24h.indices step dayStep) {
-                            sampledPts.add(recent24h[i])
+                        // Keep all 24h points up to 288 (every 5 min), or bucket-extrema downsample if denser
+                        val recentSampled = if (recent24h.size <= 288) {
+                            recent24h
+                        } else {
+                            downsamplePreservingExtrema(recent24h, targetBuckets = 96)
                         }
-                        if ((recent24h.size - 1) % dayStep != 0) {
-                            sampledPts.add(recent24h.last())
+                        for (pt in recentSampled) {
+                            if (sampledPts.isEmpty() || sampledPts.last().timestampMs < pt.timestampMs) {
+                                sampledPts.add(pt)
+                            }
                         }
                     }
                     val histArr = JSONArray()
@@ -601,9 +637,15 @@ class LocalHistoryStore(private val context: Context) :
                     }
                 }
                 val chId = rObj.getString("channelId")
-                val finalHistory = historyPts.ifEmpty {
-                    loadChannelHistory(chId, System.currentTimeMillis() - 7L * 24L * 3600L * 1000L)
+                val dbPts = loadChannelHistory(chId, System.currentTimeMillis() - 7L * 24L * 3600L * 1000L)
+                val mergedMap = java.util.TreeMap<Long, HistoricalPoint>()
+                for (pt in dbPts) {
+                    mergedMap[pt.timestampMs] = pt
                 }
+                for (pt in historyPts) {
+                    mergedMap[pt.timestampMs] = pt
+                }
+                val finalHistory = ArrayList(mergedMap.values)
                 rooms.add(
                     SensorRoomState(
                         channelId = chId,

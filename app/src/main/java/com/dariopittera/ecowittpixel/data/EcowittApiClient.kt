@@ -360,31 +360,66 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
     ): HomeAtmosphereSnapshot {
         val now = System.currentTimeMillis()
         val sevenDaysAgo = now - 7L * 24L * 3600L * 1000L
+        val twentyFourHoursAgo = now - 24L * 3600L * 1000L
 
-        val resolvedMac = settings.cloudDeviceMac.trim().ifBlank {
+        var resolvedMac = settings.cloudDeviceMac.trim().ifBlank {
+            historyStore.loadDiscoveredMac()
+        }.ifBlank {
             snapshot.gatewayFirmware.substringAfter("(", "").substringBefore(")", "").trim()
+        }
+
+        val hasCloudCredentials = settings.cloudApplicationKey.isNotBlank() && settings.cloudApiKey.isNotBlank()
+        if (hasCloudCredentials && !resolvedMac.contains(":")) {
+            runCatching {
+                val appKey = URLEncoder.encode(settings.cloudApplicationKey.trim(), "UTF-8")
+                val apiKey = URLEncoder.encode(settings.cloudApiKey.trim(), "UTF-8")
+                val listUrl =
+                    "https://api.ecowitt.net/api/v3/device/list?application_key=$appKey&api_key=$apiKey"
+                val listResp = JSONObject(httpGet(listUrl, timeoutMs = 4500))
+                val listData = listResp.optJSONObject("data")?.optJSONArray("list")
+                if (listData != null && listData.length() > 0) {
+                    val foundMac = listData.getJSONObject(0).optString("mac", "")
+                    if (foundMac.isNotBlank()) {
+                        resolvedMac = foundMac
+                        historyStore.saveDiscoveredMac(foundMac)
+                    }
+                }
+                Thread.sleep(1100L)
+            }
         }
 
         val existingGatewayHistory = historyStore.loadChannelHistory("gateway", sevenDaysAgo)
         val oldestSpanMs = existingGatewayHistory.firstOrNull()?.timestampMs ?: now
         val hasFullWeekInDb = existingGatewayHistory.size >= 40 && (now - oldestSpanMs) >= 5L * 24L * 3600L * 1000L
 
-        if (!hasFullWeekInDb &&
-            settings.cloudApplicationKey.isNotBlank() &&
-            settings.cloudApiKey.isNotBlank() &&
-            resolvedMac.isNotBlank()
-        ) {
-            runCatching {
-                Thread.sleep(1100L)
-                fetchAndStoreCloudHistory(settings, resolvedMac, days = 1)
-            }
-            runCatching {
-                Thread.sleep(1100L)
-                fetchAndStoreCloudHistory(settings, resolvedMac, days = 7)
-            }
-            runCatching {
-                Thread.sleep(1100L)
-                fetchAndStoreCloudHistory(settings, resolvedMac, days = 30)
+        val recent24hHistory = historyStore.loadChannelHistory("gateway", twentyFourHoursAgo)
+        val oldest24hMs = recent24hHistory.firstOrNull()?.timestampMs ?: now
+        val hasFull24hCoverage = recent24hHistory.size >= 80 && (now - oldest24hMs) >= 22L * 3600L * 1000L
+        val lastCloudBackfillMs = historyStore.loadCloudBackfillTimestamp()
+        val needsRecent24hBackfill = (!hasFull24hCoverage && (now - lastCloudBackfillMs) >= 5 * 60_000L) ||
+            (now - lastCloudBackfillMs) >= 30 * 60_000L
+
+        if (hasCloudCredentials && resolvedMac.contains(":")) {
+            if (!hasFullWeekInDb) {
+                runCatching {
+                    Thread.sleep(1100L)
+                    fetchAndStoreCloudHistory(settings, resolvedMac, days = 1)
+                    historyStore.saveCloudBackfillTimestamp(now)
+                }
+                runCatching {
+                    Thread.sleep(1100L)
+                    fetchAndStoreCloudHistory(settings, resolvedMac, days = 7)
+                }
+                runCatching {
+                    Thread.sleep(1100L)
+                    fetchAndStoreCloudHistory(settings, resolvedMac, days = 30)
+                }
+            } else if (needsRecent24hBackfill) {
+                // Periodically backfill the past 24 hours at 5-minute resolution so LAN-only gaps and peaks are never missed
+                runCatching {
+                    fetchAndStoreCloudHistory(settings, resolvedMac, days = 1)
+                    historyStore.saveCloudBackfillTimestamp(now)
+                }
             }
         }
 
