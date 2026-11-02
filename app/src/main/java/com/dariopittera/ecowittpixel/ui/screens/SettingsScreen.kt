@@ -101,6 +101,7 @@ fun SettingsScreen(
     var appKeyText by remember(settings.cloudApplicationKey) { mutableStateOf(settings.cloudApplicationKey) }
     var apiKeyText by remember(settings.cloudApiKey) { mutableStateOf(settings.cloudApiKey) }
     var macText by remember(settings.cloudDeviceMac) { mutableStateOf(settings.cloudDeviceMac) }
+    var locationText by remember(settings.weatherLocationQuery) { mutableStateOf(settings.weatherLocationQuery) }
     var showAppKey by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
 
@@ -453,6 +454,119 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Save LAN IP")
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 3b. Local Outdoor Weather Reference Card (Open-Meteo + Physical Outdoor Sensor)
+        val effectiveOutdoor = snapshot.effectiveOutdoorWeather
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.CloudSync,
+                        contentDescription = "Local weather",
+                        tint = ComfortEmerald
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Local outdoor weather context",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Checks outdoor temperature, humidity, rain, wind, and pressure so indoor room and window advice is always sensible.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFB0BEC5)
+                        )
+                    }
+                }
+
+                if (effectiveOutdoor != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF102136))
+                            .border(
+                                width = 1.dp,
+                                color = ComfortEmerald.copy(alpha = 0.25f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Column {
+                            Text(
+                                text = "Active outdoor reference: ${effectiveOutdoor.locationName} (${effectiveOutdoor.conditionLabel})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = ComfortEmerald
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = String.format(
+                                    Locale.UK,
+                                    "Temp %s (feels %s) • %d%% RH (%.1f g/m³, DP %s) • %s • wind %.0f km/h",
+                                    settings.tempUnit.format(effectiveOutdoor.temperatureC),
+                                    settings.tempUnit.format(effectiveOutdoor.feelsLikeC),
+                                    effectiveOutdoor.humidityPct.toInt(),
+                                    effectiveOutdoor.absoluteHumidityGm3,
+                                    settings.tempUnit.format(effectiveOutdoor.dewPointC),
+                                    settings.pressureUnit.format(effectiveOutdoor.pressureHpa),
+                                    effectiveOutdoor.windSpeedKmh
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFE2E8F0)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = locationText,
+                    onValueChange = { locationText = it },
+                    label = { Text("City or town (leave blank for automatic location)") },
+                    placeholder = { Text("e.g. London, Milan, Zurich") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            locationText = ""
+                            onUpdateSettings(settings.copy(weatherLocationQuery = ""))
+                            onTestConnection()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Auto-detect area")
+                    }
+                    Button(
+                        onClick = {
+                            onUpdateSettings(settings.copy(weatherLocationQuery = locationText.trim()))
+                            onTestConnection()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Save weather city")
                     }
                 }
             }

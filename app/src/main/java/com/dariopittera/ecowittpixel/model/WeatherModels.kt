@@ -261,6 +261,25 @@ data class SensorRoomState(
         get() = Psychrometrics.computeComfortScore(temperatureC, humidityPct, archetype)
 }
 
+data class LocalOutdoorWeather(
+    val locationName: String,
+    val temperatureC: Float,
+    val feelsLikeC: Float,
+    val humidityPct: Float,
+    val dewPointC: Float,
+    val pressureHpa: Float,
+    val precipitationMm: Float = 0f,
+    val windSpeedKmh: Float = 0f,
+    val weatherCode: Int = 0,
+    val conditionLabel: String = "Clear sky",
+    val isRainingOrSnowing: Boolean = false,
+    val sourceLabel: String = "Open-Meteo local weather",
+    val updatedAtMs: Long = System.currentTimeMillis()
+) {
+    val absoluteHumidityGm3: Float
+        get() = Psychrometrics.computeAbsoluteHumidityGm3(temperatureC, humidityPct)
+}
+
 data class HomeAtmosphereSnapshot(
     val rooms: List<SensorRoomState>,
     val source: ConnectionSource,
@@ -268,16 +287,56 @@ data class HomeAtmosphereSnapshot(
     val gatewayFirmware: String = "GW1200C_V1.3.4",
     val gatewayIp: String = "",
     val lastSyncMs: Long = System.currentTimeMillis(),
-    val syncMessage: String = "Live telemetry active"
+    val syncMessage: String = "Live telemetry active",
+    val localWeather: LocalOutdoorWeather? = null
 ) {
     val primaryGatewayRoom: SensorRoomState?
         get() = rooms.firstOrNull { it.channelId == "gateway" } ?: rooms.firstOrNull()
 
+    /**
+     * Strictly returns a physical sensor configured as an outdoor archetype (never an indoor room).
+     */
     val outdoorRoom: SensorRoomState?
-        get() = rooms.firstOrNull { it.archetype.isOutdoor } ?: rooms.lastOrNull()
+        get() = rooms.firstOrNull { it.archetype.isOutdoor }
+
+    /**
+     * Combines any physical outdoor Ecowitt sensor with local meteorological weather (Open-Meteo)
+     * and the GW1200 barometer so the app always has accurate outdoor temperature, humidity,
+     * pressure, precipitation, and wind context even when all Ecowitt sensors are indoors.
+     */
+    val effectiveOutdoorWeather: LocalOutdoorWeather?
+        get() {
+            val hwOutdoor = outdoorRoom
+            val met = localWeather
+            val baro = rooms.firstNotNullOfOrNull { it.relativePressureHpa } ?: met?.pressureHpa ?: 1013.2f
+            return when {
+                hwOutdoor != null && met != null -> met.copy(
+                    temperatureC = hwOutdoor.temperatureC,
+                    feelsLikeC = hwOutdoor.feelsLikeC,
+                    humidityPct = hwOutdoor.humidityPct,
+                    dewPointC = hwOutdoor.dewPointC,
+                    pressureHpa = baro,
+                    sourceLabel = "${hwOutdoor.roomName} + ${met.locationName}"
+                )
+                hwOutdoor != null -> LocalOutdoorWeather(
+                    locationName = hwOutdoor.roomName,
+                    temperatureC = hwOutdoor.temperatureC,
+                    feelsLikeC = hwOutdoor.feelsLikeC,
+                    humidityPct = hwOutdoor.humidityPct,
+                    dewPointC = hwOutdoor.dewPointC,
+                    pressureHpa = baro,
+                    conditionLabel = if (hwOutdoor.humidityPct >= 88f) "Humid outdoor air" else "Outdoor sensor",
+                    isRainingOrSnowing = false,
+                    sourceLabel = hwOutdoor.roomName,
+                    updatedAtMs = hwOutdoor.lastUpdatedMs
+                )
+                met != null -> met.copy(pressureHpa = baro)
+                else -> null
+            }
+        }
 
     val pressureHpa: Float?
-        get() = rooms.firstNotNullOfOrNull { it.relativePressureHpa }
+        get() = rooms.firstNotNullOfOrNull { it.relativePressureHpa } ?: localWeather?.pressureHpa
 
     val pressureTrend3hHpa: Float?
         get() = rooms.firstNotNullOfOrNull { it.pressureTrend3hHpa }
@@ -310,6 +369,7 @@ data class AppSettings(
     val cloudApplicationKey: String = "",
     val cloudApiKey: String = "",
     val cloudDeviceMac: String = "",
+    val weatherLocationQuery: String = "",
     val preferLocalLan: Boolean = true,
     val demoModeEnabled: Boolean = true,
     val tempUnit: TempUnit = TempUnit.CELSIUS,
@@ -504,33 +564,149 @@ object Psychrometrics {
         return (100f - tempPenalty - humPenalty).roundToInt().coerceIn(15, 100)
     }
 
+    fun wmoCodeToCondition(code: Int): Pair<String, Boolean> {
+        return when (code) {
+            0 -> "Clear sky" to false
+            1 -> "Mainly clear" to false
+            2 -> "Partly cloudy" to false
+            3 -> "Overcast" to false
+            45, 48 -> "Foggy" to false
+            51, 53, 55 -> "Light drizzle" to true
+            56, 57 -> "Freezing drizzle" to true
+            61, 63 -> "Rain" to true
+            65 -> "Heavy rain" to true
+            66, 67 -> "Freezing rain" to true
+            71, 73, 75, 77 -> "Snowfall" to true
+            80, 81, 82 -> "Rain showers" to true
+            85, 86 -> "Snow showers" to true
+            95, 96, 99 -> "Thunderstorm" to true
+            else -> "Cloudy" to false
+        }
+    }
+
+    /**
+     * Checks whether opening a window is actually sensible given the indoor room temperature
+     * and local outdoor meteorological conditions (rain/snow, gale wind, freezing cold, or summer heat).
+     */
+    fun canRecommendOpeningWindow(
+        indoor: SensorRoomState,
+        outdoor: LocalOutdoorWeather
+    ): Boolean {
+        if (outdoor.isRainingOrSnowing || outdoor.precipitationMm >= 0.2f) return false
+        if (outdoor.windSpeedKmh >= 38f) return false
+        if (outdoor.temperatureC < 5.5f) return false
+        // Do not tell the user to open windows to dry a room if the room is already cold
+        if (indoor.temperatureC < indoor.archetype.idealTempMinC - 0.3f && outdoor.temperatureC < indoor.temperatureC) {
+            return false
+        }
+        // Do not tell the user to open windows if outdoor air is warmer than the room's upper comfort limit
+        if (outdoor.temperatureC > indoor.archetype.idealTempMaxC + 0.8f && outdoor.temperatureC > indoor.temperatureC + 0.5f) {
+            return false
+        }
+        return true
+    }
+
     fun buildVentilationAdvice(
         indoor: SensorRoomState,
         outdoor: SensorRoomState?,
-        tempUnit: TempUnit
+        tempUnit: TempUnit,
+        localOutdoor: LocalOutdoorWeather? = null
     ): String {
         if (indoor.archetype.isOutdoor) {
-            return "Outdoor reference sensor: ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³ absolute moisture"
+            val metNote = if (localOutdoor != null) {
+                " • local weather (${localOutdoor.locationName}): ${localOutdoor.conditionLabel.lowercase()}, ${String.format(java.util.Locale.UK, "%.0f", localOutdoor.pressureHpa)} hPa"
+            } else ""
+            return "Outdoor reference sensor: ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ absolute moisture$metNote"
         }
-        if (outdoor == null || outdoor.channelId == indoor.channelId) {
-            return if (indoor.humidityPct > indoor.archetype.scientificAlertHumidityMaxPct) {
-                "Indoor air holds ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³ moisture; ventilate if outdoor air is drier"
+
+        val effectiveOut: LocalOutdoorWeather? = localOutdoor ?: if (outdoor != null && outdoor.channelId != indoor.channelId) {
+            LocalOutdoorWeather(
+                locationName = outdoor.roomName,
+                temperatureC = outdoor.temperatureC,
+                feelsLikeC = outdoor.feelsLikeC,
+                humidityPct = outdoor.humidityPct,
+                dewPointC = outdoor.dewPointC,
+                pressureHpa = outdoor.relativePressureHpa ?: 1013.2f,
+                conditionLabel = "Outdoor sensor",
+                isRainingOrSnowing = false,
+                sourceLabel = outdoor.roomName
+            )
+        } else null
+
+        if (effectiveOut == null) {
+            return if (indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct) {
+                "Indoor air holds ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ moisture; run a dehumidifier or ventilate if outdoor air is dry and mild"
             } else {
-                "Indoor moisture is balanced at ${String.format("%.1f", indoor.absoluteHumidityGm3)} g/m³"
+                "Indoor moisture is balanced at ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³"
             }
         }
-        val absDiff = indoor.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
-        val tempDiff = indoor.temperatureC - outdoor.temperatureC
+
+        val absDiff = indoor.absoluteHumidityGm3 - effectiveOut.absoluteHumidityGm3
+        val tempDiff = indoor.temperatureC - effectiveOut.temperatureC
+        val outSummary = "${effectiveOut.locationName}: ${tempUnit.format(effectiveOut.temperatureC)}, ${effectiveOut.humidityPct.toInt()}% RH, ${effectiveOut.conditionLabel.lowercase()}"
 
         return when {
-            indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct && absDiff >= 1.5f ->
-                "Open window: indoor humidity is elevated (${indoor.humidityPct.toInt()}% RH) and outdoor air carries ${String.format("%.1f", absDiff)} g/m³ less water vapour"
-            indoor.temperatureC > indoor.archetype.idealTempMaxC && tempDiff >= 1.5f && absDiff >= -0.8f ->
-                "Open window: outdoor air is ${tempUnit.format(outdoor.temperatureC)} and will naturally cool the room"
+            // 1. High indoor humidity above the room's scientific threshold
+            indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct -> {
+                when {
+                    absDiff < 1.2f ->
+                        "Keep windows closed: outdoor air ($outSummary) holds ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³ moisture and will not dry ${indoor.roomName}; use a dehumidifier"
+                    effectiveOut.isRainingOrSnowing || effectiveOut.precipitationMm >= 0.2f ->
+                        "Keep windows closed (${effectiveOut.conditionLabel.lowercase()} outside in ${effectiveOut.locationName} at ${tempUnit.format(effectiveOut.temperatureC)}): use a dehumidifier or extractor fan instead of opening windows"
+                    indoor.temperatureC < indoor.archetype.idealTempMinC ->
+                        "Room is cool (${tempUnit.format(indoor.temperatureC)}) and humid (${indoor.humidityPct.toInt()}% RH): raise heating to ${tempUnit.format(indoor.archetype.idealTempMinC)} or run a dehumidifier rather than chilling the room with ${tempUnit.format(effectiveOut.temperatureC)} outdoor air"
+                    effectiveOut.temperatureC < 6.0f ->
+                        "Cold outdoor air (${tempUnit.format(effectiveOut.temperatureC)} in ${effectiveOut.locationName}): use a dehumidifier or brief 3 min shock ventilation so walls do not chill and condense"
+                    effectiveOut.temperatureC > indoor.archetype.idealTempMaxC + 0.8f && effectiveOut.temperatureC > indoor.temperatureC ->
+                        "Keep windows closed: outdoor air is warm (${tempUnit.format(effectiveOut.temperatureC)} in ${effectiveOut.locationName}); use air conditioning or a dehumidifier to dry ${indoor.roomName}"
+                    effectiveOut.windSpeedKmh >= 38f ->
+                        "High outdoor wind (${effectiveOut.windSpeedKmh.toInt()} km/h in ${effectiveOut.locationName}): use a trickle vent or dehumidifier instead of opening windows wide"
+                    effectiveOut.temperatureC < 13.0f ->
+                        "Brief 5 to 10 min ventilation advised: outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ less moisture but is cool"
+                    else ->
+                        "Open window: indoor humidity is ${indoor.humidityPct.toInt()}% RH and outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ less water vapour"
+                }
+            }
+
+            // 2. Room is warmer than ideal range
+            indoor.temperatureC > indoor.archetype.idealTempMaxC + 0.5f -> {
+                when {
+                    tempDiff >= 1.5f && effectiveOut.temperatureC >= 11.0f && !effectiveOut.isRainingOrSnowing && absDiff >= -1.0f ->
+                        "Open window for natural cooling: outdoor air ($outSummary) is cooler and will bring ${indoor.roomName} into the ${tempUnit.format(indoor.archetype.idealTempMinC)} to ${tempUnit.format(indoor.archetype.idealTempMaxC)} target zone"
+                    effectiveOut.isRainingOrSnowing && tempDiff >= 1.5f ->
+                        "Room is warm (${tempUnit.format(indoor.temperatureC)}), but ${effectiveOut.conditionLabel.lowercase()} is active outside ($outSummary): use a fan or trickle vent"
+                    effectiveOut.temperatureC >= indoor.temperatureC ->
+                        "Keep windows shaded and closed: outdoor air ($outSummary) is warmer than ${indoor.roomName}"
+                    else ->
+                        "Room is warm (${tempUnit.format(indoor.temperatureC)}); outdoor air ($outSummary) is ${tempUnit.format(effectiveOut.temperatureC)}"
+                }
+            }
+
+            // 3. Room is cooler than ideal range
+            indoor.temperatureC < indoor.archetype.idealTempMinC - 0.5f -> {
+                if (effectiveOut.temperatureC > indoor.temperatureC + 2.0f && !effectiveOut.isRainingOrSnowing && absDiff >= -1.0f) {
+                    "Room is cool (${tempUnit.format(indoor.temperatureC)}), while outdoor air ($outSummary) is milder"
+                } else {
+                    "Room is cool (${tempUnit.format(indoor.temperatureC)}) and outdoor air is ${tempUnit.format(effectiveOut.temperatureC)} (${effectiveOut.conditionLabel.lowercase()}): keep windows closed and check heating"
+                }
+            }
+
+            // 4. Indoor air is dry (< 35% RH)
+            indoor.humidityPct < 35.0f -> {
+                if (absDiff <= -1.5f && effectiveOut.temperatureC in 14f..24f && !effectiveOut.isRainingOrSnowing) {
+                    "Indoor air is dry (${indoor.humidityPct.toInt()}% RH): ventilating with outdoor air ($outSummary) will naturally add moisture"
+                } else {
+                    "Indoor air is dry (${indoor.humidityPct.toInt()}% RH) and outdoor air holds ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³: consider a humidifier"
+                }
+            }
+
+            // 5. Outdoor air is much more humid while indoor humidity is already moderate-high
             absDiff < -1.5f && indoor.humidityPct >= 52f ->
-                "Keep windows closed: outdoor air has ${String.format("%.1f", -absDiff)} g/m³ more moisture than indoors"
+                "Keep windows closed: outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", -absDiff)} g/m³ more moisture than ${indoor.roomName}"
+
+            // 6. Balanced indoor and outdoor climate
             else ->
-                "Indoor and outdoor moisture are well balanced (indoor ${String.format("%.1f", indoor.absoluteHumidityGm3)} vs outdoor ${String.format("%.1f", outdoor.absoluteHumidityGm3)} g/m³)"
+                "Climate well balanced: indoor ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ vs outdoor ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³ ($outSummary)"
         }
     }
 
@@ -582,7 +758,7 @@ object AlertEvaluator {
         settings: AppSettings
     ): List<RoomAlertBreach> {
         val breaches = mutableListOf<RoomAlertBreach>()
-        val outdoor = snapshot.outdoorRoom
+        val outdoor = snapshot.effectiveOutdoorWeather
 
         snapshot.rooms.forEachIndexed { idx, room ->
             if (settings.mouldRiskNotifications && !room.archetype.isOutdoor && room.mouldRisk == MouldRiskLevel.HIGH) {
@@ -600,7 +776,7 @@ object AlertEvaluator {
                 )
             }
 
-            if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null && outdoor.channelId != room.channelId) {
+            if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null) {
                 val absDiff = room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
                 val humLimit = room.archetype.scientificAlertHumidityMaxPct
                 val humSustained = Psychrometrics.isHumiditySustained(
@@ -608,7 +784,9 @@ object AlertEvaluator {
                     thresholdPct = humLimit,
                     minSustainedHours = 4.0f
                 )
-                if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f) {
+                val canOpenWindow = Psychrometrics.canRecommendOpeningWindow(room, outdoor)
+                if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f && canOpenWindow) {
+                    val isChillyOut = outdoor.temperatureC < 13.0f
                     breaches.add(
                         RoomAlertBreach(
                             key = "vent_advice_${room.channelId}",
@@ -616,13 +794,21 @@ object AlertEvaluator {
                             channelId = room.channelId,
                             roomName = room.roomName,
                             severity = AlertSeverity.VENTILATION_ADVICE,
-                            shortBadge = "Open window",
-                            title = "Open window in ${room.roomName}",
+                            shortBadge = if (isChillyOut) "Air 5–10m" else "Open window",
+                            title = if (isChillyOut) {
+                                "Brief 5–10 min ventilation in ${room.roomName}"
+                            } else {
+                                "Open window in ${room.roomName}"
+                            },
                             body = String.format(
                                 java.util.Locale.UK,
-                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% limit for 4h+) and outdoor air carries %.1f g/m³ less moisture.",
+                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% for 4h+). Outdoor air in %s (%s, %.0f%% RH, %s) carries %.1f g/m³ less moisture.",
                                 room.humidityPct,
                                 humLimit,
+                                outdoor.locationName,
+                                settings.tempUnit.format(outdoor.temperatureC),
+                                outdoor.humidityPct,
+                                outdoor.conditionLabel.lowercase(),
                                 absDiff
                             )
                         )

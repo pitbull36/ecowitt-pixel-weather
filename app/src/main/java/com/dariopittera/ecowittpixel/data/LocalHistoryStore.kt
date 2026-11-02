@@ -10,6 +10,7 @@ import com.dariopittera.ecowittpixel.model.ConnectionSource
 import com.dariopittera.ecowittpixel.model.CustomAlertCriterion
 import com.dariopittera.ecowittpixel.model.HistoricalPoint
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
+import com.dariopittera.ecowittpixel.model.LocalOutdoorWeather
 import com.dariopittera.ecowittpixel.model.NotificationMetric
 import com.dariopittera.ecowittpixel.model.PressureUnit
 import com.dariopittera.ecowittpixel.model.RoomArchetype
@@ -109,6 +110,7 @@ class LocalHistoryStore(private val context: Context) :
             cloudApplicationKey = prefs.getString("cloud_app_key", "") ?: "",
             cloudApiKey = prefs.getString("cloud_api_key", "") ?: "",
             cloudDeviceMac = prefs.getString("cloud_mac", "") ?: "",
+            weatherLocationQuery = prefs.getString("weather_location_query", "") ?: "",
             preferLocalLan = prefs.getBoolean("prefer_local_lan", defaults.preferLocalLan),
             demoModeEnabled = prefs.getBoolean("demo_mode", defaults.demoModeEnabled),
             tempUnit = TempUnit.entries.firstOrNull {
@@ -197,6 +199,7 @@ class LocalHistoryStore(private val context: Context) :
             .putString("cloud_app_key", settings.cloudApplicationKey.trim())
             .putString("cloud_api_key", settings.cloudApiKey.trim())
             .putString("cloud_mac", settings.cloudDeviceMac.trim())
+            .putString("weather_location_query", settings.weatherLocationQuery.trim())
             .putBoolean("prefer_local_lan", settings.preferLocalLan)
             .putBoolean("demo_mode", settings.demoModeEnabled)
             .putString("temp_unit", settings.tempUnit.name)
@@ -428,6 +431,7 @@ class LocalHistoryStore(private val context: Context) :
             put("cloudApplicationKey", settings.cloudApplicationKey.trim())
             put("cloudApiKey", settings.cloudApiKey.trim())
             put("cloudDeviceMac", settings.cloudDeviceMac.trim())
+            put("weatherLocationQuery", settings.weatherLocationQuery.trim())
             put("preferLocalLan", settings.preferLocalLan)
             put("demoModeEnabled", settings.demoModeEnabled)
             put("tempUnit", settings.tempUnit.name)
@@ -465,6 +469,7 @@ class LocalHistoryStore(private val context: Context) :
                 cloudApplicationKey = root.optString("cloudApplicationKey", ""),
                 cloudApiKey = root.optString("cloudApiKey", ""),
                 cloudDeviceMac = root.optString("cloudDeviceMac", ""),
+                weatherLocationQuery = root.optString("weatherLocationQuery", ""),
                 preferLocalLan = root.optBoolean("preferLocalLan", defaults.preferLocalLan),
                 demoModeEnabled = root.optBoolean("demoModeEnabled", defaults.demoModeEnabled),
                 tempUnit = TempUnit.entries.firstOrNull {
@@ -610,8 +615,71 @@ class LocalHistoryStore(private val context: Context) :
                 arr.put(rObj)
             }
             put("rooms", arr)
+            snapshot.localWeather?.let { lw ->
+                put("localWeather", serializeLocalWeatherJson(lw))
+            }
         }
         return root.toString()
+    }
+
+    fun serializeLocalWeatherJson(lw: LocalOutdoorWeather): JSONObject = JSONObject().apply {
+        put("locationName", lw.locationName)
+        put("temperatureC", lw.temperatureC.toDouble())
+        put("feelsLikeC", lw.feelsLikeC.toDouble())
+        put("humidityPct", lw.humidityPct.toDouble())
+        put("dewPointC", lw.dewPointC.toDouble())
+        put("pressureHpa", lw.pressureHpa.toDouble())
+        put("precipitationMm", lw.precipitationMm.toDouble())
+        put("windSpeedKmh", lw.windSpeedKmh.toDouble())
+        put("weatherCode", lw.weatherCode)
+        put("conditionLabel", lw.conditionLabel)
+        put("isRainingOrSnowing", lw.isRainingOrSnowing)
+        put("sourceLabel", lw.sourceLabel)
+        put("updatedAtMs", lw.updatedAtMs)
+    }
+
+    fun deserializeLocalWeatherJson(obj: JSONObject?): LocalOutdoorWeather? {
+        if (obj == null) return null
+        return try {
+            LocalOutdoorWeather(
+                locationName = obj.optString("locationName", "Local weather"),
+                temperatureC = obj.optDouble("temperatureC", 15.0).toFloat(),
+                feelsLikeC = obj.optDouble("feelsLikeC", 14.5).toFloat(),
+                humidityPct = obj.optDouble("humidityPct", 60.0).toFloat(),
+                dewPointC = obj.optDouble("dewPointC", 7.3).toFloat(),
+                pressureHpa = obj.optDouble("pressureHpa", 1013.2).toFloat(),
+                precipitationMm = obj.optDouble("precipitationMm", 0.0).toFloat(),
+                windSpeedKmh = obj.optDouble("windSpeedKmh", 8.0).toFloat(),
+                weatherCode = obj.optInt("weatherCode", 0),
+                conditionLabel = obj.optString("conditionLabel", "Clear sky"),
+                isRainingOrSnowing = obj.optBoolean("isRainingOrSnowing", false),
+                sourceLabel = obj.optString("sourceLabel", "Open-Meteo local weather"),
+                updatedAtMs = obj.optLong("updatedAtMs", System.currentTimeMillis())
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun saveLocalWeatherCache(queryKey: String, weather: LocalOutdoorWeather) {
+        val obj = serializeLocalWeatherJson(weather).apply {
+            put("queryKey", queryKey.trim().lowercase(Locale.UK))
+        }
+        prefs.edit().putString("cached_local_weather_json", obj.toString()).apply()
+    }
+
+    fun loadLocalWeatherCache(queryKey: String, maxAgeMs: Long = 15 * 60_000L): LocalOutdoorWeather? {
+        val raw = prefs.getString("cached_local_weather_json", null) ?: return null
+        return try {
+            val obj = JSONObject(raw)
+            val cachedKey = obj.optString("queryKey", "")
+            if (cachedKey != queryKey.trim().lowercase(Locale.UK)) return null
+            val weather = deserializeLocalWeatherJson(obj) ?: return null
+            if (System.currentTimeMillis() - weather.updatedAtMs > maxAgeMs) return null
+            weather
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun deserializeSnapshotJson(raw: String): HomeAtmosphereSnapshot? {
@@ -679,7 +747,8 @@ class LocalHistoryStore(private val context: Context) :
                 gatewayFirmware = root.optString("gatewayFirmware", "GW1200C"),
                 gatewayIp = root.optString("gatewayIp", ""),
                 lastSyncMs = root.optLong("lastSyncMs", System.currentTimeMillis()),
-                syncMessage = root.optString("syncMessage", "Cached snapshot")
+                syncMessage = root.optString("syncMessage", "Cached snapshot"),
+                localWeather = deserializeLocalWeatherJson(root.optJSONObject("localWeather"))
             )
         } catch (_: Exception) {
             null

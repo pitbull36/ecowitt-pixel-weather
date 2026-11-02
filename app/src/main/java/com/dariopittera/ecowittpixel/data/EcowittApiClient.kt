@@ -4,6 +4,8 @@ import com.dariopittera.ecowittpixel.model.AppSettings
 import com.dariopittera.ecowittpixel.model.ConnectionSource
 import com.dariopittera.ecowittpixel.model.HistoricalPoint
 import com.dariopittera.ecowittpixel.model.HomeAtmosphereSnapshot
+import com.dariopittera.ecowittpixel.model.LocalOutdoorWeather
+import com.dariopittera.ecowittpixel.model.Psychrometrics
 import com.dariopittera.ecowittpixel.model.RoomArchetype
 import com.dariopittera.ecowittpixel.model.RoomConfig
 import com.dariopittera.ecowittpixel.model.SensorRoomState
@@ -26,6 +28,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -460,7 +463,152 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
                 history = fullHistory
             )
         }
-        return snapshot.copy(rooms = updatedRooms)
+        val localWeather = fetchLocalOutdoorWeather(settings) ?: snapshot.localWeather
+        return snapshot.copy(
+            rooms = updatedRooms,
+            localWeather = localWeather
+        )
+    }
+
+    /**
+     * Fetches live local outdoor meteorological telemetry (temperature, relative humidity,
+     * dew point, barometric pressure, precipitation, wind speed, and sky condition) via Open-Meteo.
+     * Cached for 15 minutes so frequent LAN polling never spams external endpoints.
+     */
+    fun fetchLocalOutdoorWeather(settings: AppSettings, forceRefresh: Boolean = false): LocalOutdoorWeather? {
+        val queryKey = settings.weatherLocationQuery.trim().ifBlank { "auto" }
+        if (!forceRefresh) {
+            val cached = historyStore.loadLocalWeatherCache(queryKey, maxAgeMs = 15 * 60_000L)
+            if (cached != null) return cached
+        }
+        return runCatching {
+            val (lat, lon, resolvedName) = resolveLocationCoordinates(settings.weatherLocationQuery)
+            val url =
+                "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                    "&current=temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,pressure_msl,surface_pressure,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m" +
+                    "&timezone=auto"
+            val root = JSONObject(httpGet(url, timeoutMs = 4000))
+            val current = root.optJSONObject("current") ?: return null
+            val tempC = current.optDouble("temperature_2m", 15.0).toFloat()
+            val humPct = current.optDouble("relative_humidity_2m", 60.0).toFloat().coerceIn(1f, 100f)
+            val dewC = if (current.has("dew_point_2m")) {
+                current.optDouble("dew_point_2m").toFloat()
+            } else {
+                Psychrometrics.computeDewPointC(tempC, humPct)
+            }
+            val feelsC = if (current.has("apparent_temperature")) {
+                current.optDouble("apparent_temperature").toFloat()
+            } else {
+                Psychrometrics.computeFeelsLikeC(tempC, humPct)
+            }
+            val pressHpa = when {
+                current.has("pressure_msl") -> current.optDouble("pressure_msl", 1013.2).toFloat()
+                current.has("surface_pressure") -> current.optDouble("surface_pressure", 1013.2).toFloat()
+                else -> 1013.2f
+            }
+            val precipMm = (
+                current.optDouble("precipitation", 0.0) +
+                    current.optDouble("rain", 0.0).coerceAtLeast(0.0) * 0.0
+                ).toFloat()
+            val windKmh = current.optDouble("wind_speed_10m", 0.0).toFloat()
+            val wmoCode = current.optInt("weather_code", 0)
+            val (condLabel, isRainOrSnow) = Psychrometrics.wmoCodeToCondition(wmoCode)
+
+            val weather = LocalOutdoorWeather(
+                locationName = resolvedName,
+                temperatureC = tempC,
+                feelsLikeC = feelsC,
+                humidityPct = humPct,
+                dewPointC = dewC,
+                pressureHpa = pressHpa,
+                precipitationMm = precipMm,
+                windSpeedKmh = windKmh,
+                weatherCode = wmoCode,
+                conditionLabel = condLabel,
+                isRainingOrSnowing = isRainOrSnow || precipMm >= 0.2f,
+                sourceLabel = "Open-Meteo ($resolvedName)",
+                updatedAtMs = System.currentTimeMillis()
+            )
+            historyStore.saveLocalWeatherCache(queryKey, weather)
+            weather
+        }.getOrElse {
+            // If offline, return the most recent cached weather even if older than 15m
+            historyStore.loadLocalWeatherCache(queryKey, maxAgeMs = 12 * 3600_000L)
+        }
+    }
+
+    private fun resolveLocationCoordinates(customQuery: String): Triple<Double, Double, String> {
+        val cleanQuery = customQuery.trim()
+        if (cleanQuery.isNotEmpty()) {
+            runCatching {
+                val enc = URLEncoder.encode(cleanQuery, "UTF-8")
+                val geoUrl =
+                    "https://geocoding-api.open-meteo.com/v1/search?name=$enc&count=1&language=en&format=json"
+                val geoRoot = JSONObject(httpGet(geoUrl, timeoutMs = 3500))
+                val results = geoRoot.optJSONArray("results")
+                if (results != null && results.length() > 0) {
+                    val first = results.getJSONObject(0)
+                    val lat = first.getDouble("latitude")
+                    val lon = first.getDouble("longitude")
+                    val city = first.optString("name", cleanQuery)
+                    val countryCode = first.optString("country_code", "").uppercase(Locale.UK)
+                    val label = if (countryCode.isNotBlank()) "$city, $countryCode" else city
+                    return Triple(lat, lon, label)
+                }
+            }
+        }
+
+        // Auto-detect approximate city & coordinates via IP geolocation (no location permission prompt required)
+        runCatching {
+            val ipGeo = JSONObject(httpGet("https://get.geojs.io/v1/ip/geo.json", timeoutMs = 2500))
+            val lat = ipGeo.optString("latitude", "").toDoubleOrNull()
+            val lon = ipGeo.optString("longitude", "").toDoubleOrNull()
+            val city = ipGeo.optString("city", "").trim()
+            val cc = ipGeo.optString("country_code", "").trim().uppercase(Locale.UK)
+            if (lat != null && lon != null) {
+                val label = when {
+                    city.isNotBlank() && cc.isNotBlank() -> "$city, $cc"
+                    city.isNotBlank() -> city
+                    else -> "Local area"
+                }
+                return Triple(lat, lon, label)
+            }
+        }
+
+        runCatching {
+            val ipWho = JSONObject(httpGet("https://ipwho.is/", timeoutMs = 2500))
+            if (ipWho.optBoolean("success", true)) {
+                val lat = ipWho.optDouble("latitude", Double.NaN)
+                val lon = ipWho.optDouble("longitude", Double.NaN)
+                val city = ipWho.optString("city", "").trim()
+                val cc = ipWho.optString("country_code", "").trim().uppercase(Locale.UK)
+                if (!lat.isNaN() && !lon.isNaN()) {
+                    val label = when {
+                        city.isNotBlank() && cc.isNotBlank() -> "$city, $cc"
+                        city.isNotBlank() -> city
+                        else -> "Local area"
+                    }
+                    return Triple(lat, lon, label)
+                }
+            }
+        }
+
+        // Fallback to device timezone region if IP geolocation is blocked
+        val tzId = TimeZone.getDefault().id
+        return when {
+            tzId.contains("London", ignoreCase = true) || tzId.contains("Dublin", ignoreCase = true) ->
+                Triple(51.5074, -0.1278, "London, UK")
+            tzId.contains("Rome", ignoreCase = true) || tzId.contains("Milan", ignoreCase = true) ->
+                Triple(45.4642, 9.1900, "Milan, IT")
+            tzId.contains("Zurich", ignoreCase = true) ->
+                Triple(47.3769, 8.5417, "Zurich, CH")
+            tzId.contains("Paris", ignoreCase = true) || tzId.contains("Berlin", ignoreCase = true) ->
+                Triple(48.8566, 2.3522, "Central Europe")
+            tzId.contains("New_York", ignoreCase = true) ->
+                Triple(40.7128, -74.0060, "New York, US")
+            else ->
+                Triple(51.5074, -0.1278, "Local weather")
+        }
     }
 
     private fun fetchAndStoreCloudHistory(
@@ -669,6 +817,22 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             )
         )
 
+        val simLocalWeather = LocalOutdoorWeather(
+            locationName = settings.weatherLocationQuery.trim().ifBlank { "Local station (auto)" },
+            temperatureC = outTemp,
+            feelsLikeC = Psychrometrics.computeFeelsLikeC(outTemp, outHum),
+            humidityPct = outHum,
+            dewPointC = Psychrometrics.computeDewPointC(outTemp, outHum),
+            pressureHpa = livingPress,
+            precipitationMm = 0f,
+            windSpeedKmh = 11f,
+            weatherCode = 1,
+            conditionLabel = if (outHum >= 82f) "Overcast" else "Mainly clear",
+            isRainingOrSnowing = outHum >= 90f,
+            sourceLabel = "Simulated local weather",
+            updatedAtMs = now
+        )
+
         return HomeAtmosphereSnapshot(
             rooms = rooms,
             source = ConnectionSource.DEMO_SIMULATION,
@@ -676,7 +840,8 @@ class EcowittApiClient(private val historyStore: LocalHistoryStore) {
             gatewayFirmware = "GW1200C_V1.3.4",
             gatewayIp = settings.gatewayIp,
             lastSyncMs = now,
-            syncMessage = "Interactive simulation active (GW1200 + 2 WH31 sensors)"
+            syncMessage = "Interactive simulation active (GW1200 + 2 WH31 sensors)",
+            localWeather = simLocalWeather
         )
     }
 

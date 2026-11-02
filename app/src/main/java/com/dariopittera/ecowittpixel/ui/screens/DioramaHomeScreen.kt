@@ -375,48 +375,86 @@ fun DioramaHomeScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 5. Smart Window Ventilation Banner
+        // 5. Smart Window Ventilation & Local Outdoor Weather Banner
+        val effectiveOutdoor = snapshot.effectiveOutdoorWeather
         val ventilationText = Psychrometrics.buildVentilationAdvice(
             indoor = activeRoom,
             outdoor = outdoorReference,
-            tempUnit = settings.tempUnit
+            tempUnit = settings.tempUnit,
+            localOutdoor = effectiveOutdoor
         )
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = PixelSurfaceElevated),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(CoolCyan.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Air,
-                        contentDescription = "Ventilation insight",
-                        tint = CoolCyan,
-                        modifier = Modifier.size(18.dp)
-                    )
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(CoolCyan.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Air,
+                            contentDescription = "Ventilation insight",
+                            tint = CoolCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${activeRoom.archetype.standardCitation} • comfort ${activeRoom.comfortScore}/100",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = CoolCyan
+                        )
+                        Text(
+                            text = ventilationText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${activeRoom.archetype.standardCitation} • comfort ${activeRoom.comfortScore}/100",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = CoolCyan
-                    )
-                    Text(
-                        text = ventilationText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White
-                    )
+
+                if (effectiveOutdoor != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Color(0xFF0E1D31))
+                            .border(
+                                width = 1.dp,
+                                color = Color.White.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(11.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Outdoor (${effectiveOutdoor.locationName}): ${effectiveOutdoor.conditionLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF93C5FD)
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.UK,
+                                "%s • %.0f%% RH (%.1f g/m³) • %s",
+                                settings.tempUnit.format(effectiveOutdoor.temperatureC),
+                                effectiveOutdoor.humidityPct,
+                                effectiveOutdoor.absoluteHumidityGm3,
+                                settings.pressureUnit.format(effectiveOutdoor.pressureHpa)
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFCBD5E1)
+                        )
+                    }
                 }
             }
         }

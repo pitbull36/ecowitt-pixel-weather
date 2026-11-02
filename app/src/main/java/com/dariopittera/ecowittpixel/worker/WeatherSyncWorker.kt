@@ -176,7 +176,7 @@ class WeatherSyncWorker(
                 }
             }
 
-            val outdoor = snapshot.outdoorRoom
+            val outdoor = snapshot.effectiveOutdoorWeather
 
             // Smart environmental triggers & custom user-defined criteria per room
             snapshot.rooms.forEachIndexed { idx, room ->
@@ -194,9 +194,9 @@ class WeatherSyncWorker(
                     clearCriterionCooldown(mouldKey)
                 }
 
-                // 2. Smart window ventilation criterion (requires sustained elevated humidity above scientific limit, never 60% RH)
+                // 2. Smart window ventilation criterion (requires sustained elevated humidity above scientific limit AND suitable outdoor weather)
                 val ventKey = "vent_advice_${room.channelId}"
-                if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null && outdoor.channelId != room.channelId) {
+                if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null) {
                     val absDiff = room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
                     val humLimit = room.archetype.scientificAlertHumidityMaxPct
                     val humSustained = forceTest || Psychrometrics.isHumiditySustained(
@@ -204,21 +204,31 @@ class WeatherSyncWorker(
                         thresholdPct = humLimit,
                         minSustainedHours = 4.0f
                     )
-                    if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f) {
+                    val canOpenWindow = Psychrometrics.canRecommendOpeningWindow(room, outdoor)
+                    if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f && canOpenWindow) {
+                        val isChillyOut = outdoor.temperatureC < 13.0f
                         dispatchCriterionAlert(
                             key = ventKey,
                             notifId = 4000 + idx,
-                            title = "Open window in ${room.roomName}",
+                            title = if (isChillyOut) {
+                                "Brief 5–10 min ventilation in ${room.roomName}"
+                            } else {
+                                "Open window in ${room.roomName}"
+                            },
                             body = String.format(
                                 Locale.UK,
-                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% limit for 4h+) and outdoor air carries %.1f g/m³ less moisture.",
+                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% limit for 4h+). Outdoor air in %s (%s, %.0f%% RH, %s) carries %.1f g/m³ less moisture.",
                                 room.humidityPct,
                                 humLimit,
+                                outdoor.locationName,
+                                settings.tempUnit.format(outdoor.temperatureC),
+                                outdoor.humidityPct,
+                                outdoor.conditionLabel.lowercase(),
                                 absDiff
                             ),
                             channelId = room.channelId
                         )
-                    } else if (room.humidityPct < humLimit - 1.5f || absDiff < 0.8f) {
+                    } else if (room.humidityPct < humLimit - 1.5f || absDiff < 0.8f || !canOpenWindow) {
                         clearCriterionCooldown(ventKey)
                     }
                 }
