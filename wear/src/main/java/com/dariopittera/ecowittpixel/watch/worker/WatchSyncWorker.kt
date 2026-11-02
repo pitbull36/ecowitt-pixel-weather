@@ -48,7 +48,7 @@ class WatchSyncWorker(
             store.saveWidgetSnapshotCache(snapshot)
 
             // Evaluate and fire standalone watch alerts ONLY when disconnected from the phone
-            // to avoid duplicate notifications when the Pixel 10 is nearby.
+            // to avoid duplicate notifications when the companion phone is nearby.
             if (settings.notificationsEnabled) {
                 evaluateStandaloneWatchAlerts(applicationContext, snapshot, settings)
             }
@@ -94,7 +94,7 @@ class WatchSyncWorker(
                 "Ecowitt standalone watch alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Standalone Pixel Watch room alerts when away from your Pixel 10"
+                description = "Standalone Wear OS room alerts when away from your phone"
                 enableVibration(true)
             }
             mgr.createNotificationChannel(channel)

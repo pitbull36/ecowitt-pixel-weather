@@ -77,7 +77,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     private val _ambientMinuteTick = MutableStateFlow(0)
     val ambientMinuteTick: StateFlow<Int> = _ambientMinuteTick.asStateFlow()
 
-    private val _statusText = MutableStateFlow("Syncing with Pixel 10...")
+    private val _statusText = MutableStateFlow("Syncing with phone...")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
 
     private val _otaLabel = MutableStateFlow("No updates (v${BuildConfig.VERSION_NAME})")
@@ -103,7 +103,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
             val app = getApplication<Application>()
             val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
             if (dlSettings != null || dlSnap != null) {
-                applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
+                applySyncedPair(dlSettings, dlSnap, "Synced with phone")
                 refreshWatchSurfaces(app)
             }
         }
@@ -120,7 +120,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                         app
                     )
                     if (dlSettings != null || dlSnap != null) {
-                        applySyncedPair(dlSettings, dlSnap, "Synced with Pixel 10")
+                        applySyncedPair(dlSettings, dlSnap, "Synced with phone")
                         refreshWatchSurfaces(app)
                     }
                 }
@@ -205,7 +205,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
             _snapshot.value = renamed
             _breaches.value = AlertEvaluator.evaluateBreaches(renamed, loadedSettings)
             _statusText.value = if (historyStore.hasSyncedFromPhone()) {
-                "Synced with Pixel 10"
+                "Synced with phone"
             } else {
                 "Live GW1200 (${renamed.gatewayIp})"
             }
@@ -232,11 +232,11 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     fun syncHybridNow(quiet: Boolean = false) {
         viewModelScope.launch {
             if (!quiet) {
-                _statusText.value = "Syncing with Pixel 10..."
+                _statusText.value = "Syncing with phone..."
             }
             val app = getApplication<Application>()
 
-            // 1. Request instant push from connected Pixel 10 & pull DataItem / UDP / Wi-Fi peer
+            // 1. Request instant push from connected phone and pull DataItem / UDP / Wi-Fi peer
             val requestedCount = WearDataLayerBridge.requestSyncFromPhone(app)
             if (requestedCount > 0) {
                 delay(400L)
@@ -266,7 +266,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                 _snapshot.value = syncedSnap
                 historyStore.saveWidgetSnapshotCache(syncedSnap)
                 _breaches.value = AlertEvaluator.evaluateBreaches(syncedSnap, liveSettings)
-                _statusText.value = "Synced with Pixel 10"
+                _statusText.value = "Synced with phone"
                 refreshWatchSurfaces(app)
                 return@launch
             }
@@ -277,10 +277,10 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             // 3. If still showing preview/simulated data OR room names haven't synced from phone yet,
-            //    auto-discover Pixel 10 (UDP broadcast + HTTP :8765) and GW1200 (:80) on local network
+            //    auto-discover companion phone (UDP broadcast + HTTP :8765) and GW1200 (:80) on local network
             if (directSnap.isSimulatedOrPreview || !historyStore.hasSyncedFromPhone()) {
                 if (!quiet) {
-                    _statusText.value = "Finding Pixel 10 / GW1200 on Wi-Fi..."
+                    _statusText.value = "Finding phone / GW1200 on Wi-Fi..."
                 }
                 val (discSettings, discSnap) = WearDataLayerBridge.discoverPhoneOrGatewayOnLan(app, historyStore)
                 if (discSettings != null) {
@@ -303,14 +303,14 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
             }
             _breaches.value = AlertEvaluator.evaluateBreaches(directSnap, _settings.value)
             _statusText.value = when {
-                directSnap.isSimulatedOrPreview -> "Open Pixel 10 app (v6) to sync rooms"
+                directSnap.isSimulatedOrPreview -> "Open phone app to sync rooms"
                 directSnap.source == ConnectionSource.LOCAL_LAN && historyStore.hasSyncedFromPhone() ->
-                    "Synced with Pixel 10 • GW1200 (${directSnap.gatewayIp})"
+                    "Synced with phone • GW1200 (${directSnap.gatewayIp})"
                 directSnap.source == ConnectionSource.LOCAL_LAN ->
                     "Live GW1200 (${directSnap.gatewayIp}) • Open phone app for room names"
                 directSnap.source == ConnectionSource.ECOWITT_CLOUD ->
-                    "Synced with Pixel 10 • Ecowitt Cloud"
-                else -> "Synced with Pixel 10"
+                    "Synced with phone • Ecowitt Cloud"
+                else -> "Synced with phone"
             }
 
             refreshWatchSurfaces(app)

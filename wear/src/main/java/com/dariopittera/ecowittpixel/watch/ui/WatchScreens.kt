@@ -131,7 +131,7 @@ fun WatchRootScreen(
 }
 
 /**
- * Level 1: Main Pixel Watch carousel where rotating the crown cycles between rooms
+ * Level 1: Main Wear OS carousel where rotating the crown cycles between rooms
  * and a final Sync and OTA card.
  */
 @Composable
@@ -665,7 +665,7 @@ private fun WatchSyncAndOtaPage(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Pixel Watch sync",
+                text = "Wear OS sync",
                 color = WatchCoolCyan,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold

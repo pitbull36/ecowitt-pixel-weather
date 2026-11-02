@@ -57,7 +57,7 @@ private class WatchIsoCamera(
 }
 
 /**
- * Circular Pixel Watch canvas rendering:
+ * Circular Wear OS canvas rendering:
  * 1. Top curved bezel arc for Temperature (205°..335°):
  *    - White (<19°C with frost crystals), Yellow (19-22.9°C), Orange (23-25.9°C), Red (26-29.9°C),
  *      and animated molten lava blobs (>=30°C) moving inside the curved glass tube.

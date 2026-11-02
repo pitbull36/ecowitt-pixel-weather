@@ -28,13 +28,13 @@
 
         <uses-library
             android:name="com.google.android.wearable"
-            android:required="true" />
+            android:required="false" />
 
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="true" />
 
-        <!-- Main Pixel Watch Activity (Carousel + Room 24h Scrubbing / 3D Tilt + Ambient Mode) -->
+        <!-- Main Wear OS Activity (Carousel + Room 24h Scrubbing / 3D Tilt + Ambient Mode) -->
         <activity
             android:name=".watch.WatchMainActivity"
             android:exported="true"
@@ -104,7 +104,7 @@
                 android:value="androidx.wear.watchface.complications.datasource.COMPLICATION_CONFIG" />
         </service>
 
-        <!-- Wearable Data Layer Listener Service for live pushes from Pixel 10 -->
+        <!-- Wearable Data Layer Listener Service for live pushes from companion phone -->
         <service
             android:name=".watch.worker.WatchWearListenerService"
             android:exported="true">

@@ -20,8 +20,8 @@ android {
         applicationId = "com.dariopittera.ecowittpixel"
         minSdk = 30
         targetSdk = 35
-        versionCode = 3016
-        versionName = "16.0.0"
+        versionCode = 3017
+        versionName = "17.0.0"
         buildConfigField("String", "GITHUB_REPO", "\"pitbull36/ecowitt-pixel-weather\"")
     }
 

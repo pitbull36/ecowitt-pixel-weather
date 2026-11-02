@@ -233,7 +233,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         if (showSaveConfirmation) {
             _statusBanner.value = String.format(
                 java.util.Locale.UK,
-                "Saved settings and thresholds for %s (%.1f–%.1f°C, ≤%.0f%% RH) and synced to Pixel Watch",
+                "Saved settings and thresholds for %s (%.1f–%.1f°C, ≤%.0f%% RH) and synced to watch",
                 updatedConfig.customName,
                 updatedConfig.alertTempMinC,
                 updatedConfig.alertTempMaxC,

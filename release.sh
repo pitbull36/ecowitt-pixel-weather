@@ -26,11 +26,11 @@ cat > app/src/main/res/xml/wearable_app_desc.xml <<EOF
 </wearableApp>
 EOF
 
-echo "==> Step 1: Building signed Pixel Watch Release APK (versionCode=${WATCH_VERSION_CODE}) via Gradle..."
+echo "==> Step 1: Building signed Wear OS Release APK (versionCode=${WATCH_VERSION_CODE}) via Gradle..."
 ./gradlew :wear:assembleRelease
 
 WATCH_APK_SOURCE="wear/build/outputs/apk/release/wear-release.apk"
-WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-pixel-watch-v${VERSION_NAME}.apk"
+WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-watch-v${VERSION_NAME}.apk"
 
 # Force v1 (JAR META-INF) + v2 + v3 signatures with --min-sdk-version 21 so Wear Installer 2,
 # Bugjaeger, and Wear OS PackageInstaller all validate the watch APK without "package is not valid".
@@ -46,14 +46,14 @@ WATCH_APK_DEST="wear/build/outputs/apk/release/wearos-pixel-watch-v${VERSION_NAM
   "$WATCH_APK_SOURCE"
 
 cp "$WATCH_APK_SOURCE" "$WATCH_APK_DEST"
-echo "==> Built and v1+v2+v3 signed Pixel Watch APK: $WATCH_APK_DEST"
+echo "==> Built and v1+v2+v3 signed Wear OS APK: $WATCH_APK_DEST"
 
-# Embed the v1+v2+v3 signed Pixel Watch APK inside the phone app's res/raw/wearos_app.apk so tools
+# Embed the v1+v2+v3 signed Wear OS APK inside the phone app's res/raw/wearos_app.apk so tools
 # like Wear Installer 2 can also extract and install the watch APK directly from the phone app.
 mkdir -p app/src/main/res/raw
 cp "$WATCH_APK_SOURCE" app/src/main/res/raw/wearos_app.apk
 
-echo "==> Step 2: Building signed Pixel 10 Phone Release APK (versionCode=${VERSION_CODE}) via Gradle..."
+echo "==> Step 2: Building signed Phone Release APK (versionCode=${VERSION_CODE}) via Gradle..."
 rm -rf app/build/intermediates/desugar_graph app/build/intermediates/project_dex_archive
 ./gradlew :app:assembleRelease
 
@@ -107,23 +107,23 @@ fi
 
 git push -u origin HEAD
 
-echo "==> Publishing GitHub Release ${TAG_NAME} with Phone and Watch APK assets..."
+echo "==> Publishing GitHub Release ${TAG_NAME} with Phone and Wear OS APK assets..."
 if gh release view "$TAG_NAME" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
   gh release upload "$TAG_NAME" "$PHONE_APK_DEST" "$WATCH_APK_DEST" --clobber --repo "$GITHUB_REPO"
 else
   gh release create "$TAG_NAME" "$PHONE_APK_DEST" "$WATCH_APK_DEST" \
     --repo "$GITHUB_REPO" \
-    --title "Release ${TAG_NAME} (Pixel 10 and Pixel Watch)" \
-    --notes "Signed Android and Wear OS APKs (versionCode=${VERSION_CODE}, watchVersionCode=${WATCH_VERSION_CODE}) for Google Pixel 10 and Pixel Watch with v1/v2/v3 signing, monotonic watch versionCode=${WATCH_VERSION_CODE}, embedded Wear OS sub-APK for Wear Installer 2, isolated phone vs watch OTA updates, live GW1200 and Cloud telemetry sync, synced custom room names, bluish humidity Tile palette, and 24h crown history scrubbing."
+    --title "Release ${TAG_NAME} (Android and Wear OS)" \
+    --notes "Signed Android and Wear OS APKs (versionCode=${VERSION_CODE}, watchVersionCode=${WATCH_VERSION_CODE}) for Android phones and any Wear OS smartwatch with v1/v2/v3 signing, monotonic watch versionCode=${WATCH_VERSION_CODE}, embedded Wear OS sub-APK for Wear Installer 2, isolated phone vs watch OTA updates, live GW1200 and Cloud telemetry sync, synced custom room names, bluish humidity Tile palette, and 24h/1w crown history scrubbing."
 fi
 
 RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/${TAG_NAME}"
 PHONE_DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/ecowitt-pixel-weather-v${VERSION_NAME}.apk"
-WATCH_DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/wearos-pixel-watch-v${VERSION_NAME}.apk"
+WATCH_DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/wearos-watch-v${VERSION_NAME}.apk"
 echo ""
 echo "============================================================"
 echo "SUCCESS! Published ${TAG_NAME} to GitHub Releases!"
 echo "Release page:          ${RELEASE_URL}"
-echo "Pixel 10 Phone APK:    ${PHONE_DOWNLOAD_URL}"
-echo "Pixel Watch Wear APK:  ${WATCH_DOWNLOAD_URL}"
+echo "Phone APK:             ${PHONE_DOWNLOAD_URL}"
+echo "Wear OS Watch APK:     ${WATCH_DOWNLOAD_URL}"
 echo "============================================================"

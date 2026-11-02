@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -1150,8 +1152,21 @@ fun HourlyThermalHeatmapCard(
     }
 
     val currentHourDefault = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY).coerceIn(0, 23) }
-    var selectedRow by remember(room.channelId) { mutableIntStateOf(rows - 1) }
-    var selectedCol by remember(room.channelId) { mutableIntStateOf(currentHourDefault) }
+    val latestPopulatedCoords = remember(gridCells, room.channelId) {
+        var found: Pair<Int, Int>? = null
+        for (r in (rows - 1) downTo 0) {
+            for (c in (cols - 1) downTo 0) {
+                if (gridCells[r][c].tempC != null) {
+                    found = r to c
+                    break
+                }
+            }
+            if (found != null) break
+        }
+        found ?: ((rows - 1) to currentHourDefault)
+    }
+    var selectedRow by remember(room.channelId) { mutableIntStateOf(latestPopulatedCoords.first) }
+    var selectedCol by remember(room.channelId) { mutableIntStateOf(latestPopulatedCoords.second) }
 
     val safeRow = selectedRow.coerceIn(0, rows - 1)
     val safeCol = selectedCol.coerceIn(0, cols - 1)
@@ -1292,51 +1307,55 @@ fun HourlyThermalHeatmapCard(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(175.dp)
+                .height(185.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xFF0E1828))
                 .padding(8.dp)
-                .pointerInput(Unit) {
-                    fun selectFromOffset(offset: Offset, width: Float, height: Float) {
-                        val leftLabelW = 42f
-                        val gridH = (height - 20f).coerceAtLeast(10f)
-                        val gridW = (width - leftLabelW).coerceAtLeast(10f)
-                        if (offset.x >= leftLabelW && offset.y <= gridH) {
-                            val c = (((offset.x - leftLabelW) / gridW) * cols).toInt().coerceIn(0, cols - 1)
-                            val r = ((offset.y / gridH) * rows).toInt().coerceIn(0, rows - 1)
-                            if (r != selectedRow || c != selectedCol) {
-                                selectedRow = r
-                                selectedCol = c
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                        }
-                    }
-                    detectTapGestures { offset ->
-                        selectFromOffset(offset, size.width.toFloat(), size.height.toFloat())
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, _ ->
-                        change.consume()
+                .pointerInput(room.channelId, rows, cols) {
+                    fun selectFromOffset(pos: Offset) {
                         val leftLabelW = 42f
                         val gridH = (size.height - 20f).coerceAtLeast(10f)
                         val gridW = (size.width - leftLabelW).coerceAtLeast(10f)
-                        val pos = change.position
-                        if (pos.x >= leftLabelW - 8f) {
-                            val c = (((pos.x - leftLabelW) / gridW) * cols).toInt().coerceIn(0, cols - 1)
-                            val r = ((pos.y / gridH) * rows).toInt().coerceIn(0, rows - 1)
-                            if (r != selectedRow || c != selectedCol) {
-                                selectedRow = r
-                                selectedCol = c
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
+                        val c = (((pos.x - leftLabelW) / gridW) * cols).toInt().coerceIn(0, cols - 1)
+                        val r = ((pos.y / gridH) * rows).toInt().coerceIn(0, rows - 1)
+                        if (r != selectedRow || c != selectedCol) {
+                            selectedRow = r
+                            selectedCol = c
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
+                    }
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        selectFromOffset(down.position)
+                        down.consume()
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull()
+                            if (change != null && change.pressed) {
+                                selectFromOffset(change.position)
+                                change.consume()
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
                 }
         ) {
             val leftLabelW = 42f
             val cellW = (size.width - leftLabelW) / cols
             val cellH = (size.height - 20f) / rows
+
+            // Subtle row and column highlight guides for the selected cell
+            drawRoundRect(
+                color = CoolCyan.copy(alpha = 0.08f),
+                topLeft = Offset(leftLabelW, safeRow * cellH),
+                size = Size((size.width - leftLabelW).coerceAtLeast(2f), cellH.coerceAtLeast(2f)),
+                cornerRadius = CornerRadius(4f, 4f)
+            )
+            drawRoundRect(
+                color = CoolCyan.copy(alpha = 0.08f),
+                topLeft = Offset(leftLabelW + safeCol * cellW, 0f),
+                size = Size(cellW.coerceAtLeast(2f), (rows * cellH).coerceAtLeast(2f)),
+                cornerRadius = CornerRadius(4f, 4f)
+            )
 
             for (r in 0 until rows) {
                 val rowCells = gridCells[r]
@@ -1380,11 +1399,18 @@ fun HourlyThermalHeatmapCard(
 
                     if (isSelected) {
                         drawRoundRect(
+                            color = CoolCyan.copy(alpha = 0.55f),
+                            topLeft = Offset(topLeft.x - 2.2f, topLeft.y - 2.2f),
+                            size = Size(cellSize.width + 4.4f, cellSize.height + 4.4f),
+                            cornerRadius = CornerRadius(6f, 6f),
+                            style = Stroke(width = 3.2f)
+                        )
+                        drawRoundRect(
                             color = Color.White,
-                            topLeft = Offset(topLeft.x - 1f, topLeft.y - 1f),
-                            size = Size(cellSize.width + 2f, cellSize.height + 2f),
+                            topLeft = Offset(topLeft.x - 0.8f, topLeft.y - 0.8f),
+                            size = Size(cellSize.width + 1.6f, cellSize.height + 1.6f),
                             cornerRadius = CornerRadius(5f, 5f),
-                            style = Stroke(width = 2.2f)
+                            style = Stroke(width = 2.0f)
                         )
                     }
                 }

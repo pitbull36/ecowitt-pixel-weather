@@ -912,7 +912,7 @@ private fun CustomNotificationCriteriaCard(
                             color = Color.White
                         )
                         Text(
-                            text = "Alerts on your Pixel 10 and Pixel Watch (60 min cooldown per rule).",
+                            text = "Alerts on your phone and Wear OS watch (60 min cooldown per rule).",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFB0BEC5)
                         )

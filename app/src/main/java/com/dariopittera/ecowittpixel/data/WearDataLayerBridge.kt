@@ -68,9 +68,9 @@ object WearDataLayerBridge {
 
     /**
      * Starts both:
-     * 1. A local HTTP server on TCP port 8765 (`/ecowitt_sync`) on the Pixel 10 phone.
-     * 2. A local UDP broadcast responder on UDP port 8766 so the Pixel Watch can discover the
-     *    Pixel 10 phone in a single UDP packet (< 30 ms) without scanning 254 IPs.
+     * 1. A local HTTP server on TCP port 8765 (`/ecowitt_sync`) on the companion phone.
+     * 2. A local UDP broadcast responder on UDP port 8766 so any Wear OS watch can discover the
+     *    companion phone in a single UDP packet (< 30 ms) without scanning 254 IPs.
      */
     fun startPhoneLanSyncServer(context: Context) {
         val appContext = context.applicationContext
@@ -174,7 +174,7 @@ object WearDataLayerBridge {
             nodes.map { node ->
                 WearNodeInfo(
                     id = node.id,
-                    displayName = node.displayName.ifBlank { "Pixel Watch" },
+                    displayName = node.displayName.ifBlank { "Wear OS Watch" },
                     isNearby = node.isNearby
                 )
             }

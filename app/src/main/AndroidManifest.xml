@@ -85,7 +85,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- Wearable Data Layer listener for Pixel Watch sync requests -->
+        <!-- Wearable Data Layer listener for Wear OS watch sync requests -->
         <service
             android:name=".worker.PhoneWearListenerService"
             android:exported="true">
@@ -98,12 +98,12 @@
             </intent-filter>
         </service>
 
-        <!-- BroadcastReceiver to open a breached room directly on the Pixel Watch from phone notifications -->
+        <!-- BroadcastReceiver to open a breached room directly on the Wear OS watch from phone notifications -->
         <receiver
             android:name=".worker.WatchActionReceiver"
             android:exported="false" />
 
-        <!-- Embedded Pixel Watch APK descriptor for Wear Installer 2 / companion watch installers -->
+        <!-- Embedded Wear OS APK descriptor for Wear Installer 2 / companion watch installers -->
         <meta-data
             android:name="com.google.android.wearable.beta.app"
             android:resource="@xml/wearable_app_desc" />
