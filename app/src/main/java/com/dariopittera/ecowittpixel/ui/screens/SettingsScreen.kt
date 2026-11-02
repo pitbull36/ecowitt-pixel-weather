@@ -716,7 +716,14 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "${draftCfg.archetype.standardCitation} • ${draftCfg.archetype.standardRationale}",
+                        text = draftCfg.archetype.laymanRule,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CoolCyan
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = draftCfg.archetype.standardRationale,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF90A4AE),
                         fontSize = 11.sp

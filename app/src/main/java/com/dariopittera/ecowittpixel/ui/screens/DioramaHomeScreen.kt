@@ -407,11 +407,25 @@ fun DioramaHomeScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "${activeRoom.archetype.standardCitation} • comfort ${activeRoom.comfortScore}/100",
+                            text = "${activeRoom.archetype.laymanRule} • comfort ${activeRoom.comfortScore}/100",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = CoolCyan
                         )
+                        Text(
+                            text = String.format(
+                                Locale.UK,
+                                "Room standard: target %s–%s and %.0f–%.0f%% RH (%s)",
+                                settings.tempUnit.format(activeRoom.archetype.idealTempMinC),
+                                settings.tempUnit.format(activeRoom.archetype.idealTempMaxC),
+                                activeRoom.archetype.idealHumidityMin,
+                                activeRoom.archetype.idealHumidityMax,
+                                activeRoom.archetype.standardCitation
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF93C5FD)
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = ventilationText,
                             style = MaterialTheme.typography.bodySmall,
@@ -437,7 +451,7 @@ fun DioramaHomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Outdoor (${effectiveOutdoor.locationName}): ${effectiveOutdoor.conditionLabel}",
+                            text = "Outdoor weather (${effectiveOutdoor.locationName}): ${effectiveOutdoor.conditionLabel}",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF93C5FD)
@@ -473,18 +487,25 @@ fun DioramaHomeScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                val tempDelta = settings.tempUnit.convert(activeRoom.temperatureC) -
+                    settings.tempUnit.convert(activeRoom.temperatureC - activeRoom.tempTrend1hC)
+                val tempLaymanTrend = when {
+                    tempDelta >= 0.4f -> "Warming up"
+                    tempDelta <= -0.4f -> "Cooling down"
+                    else -> "Steady warmth"
+                }
                 BentoMetricCard(
                     title = "Temperature",
                     primaryValue = settings.tempUnit.format(activeRoom.temperatureC),
                     secondaryLabel = "Feels like ${settings.tempUnit.format(activeRoom.feelsLikeC)}",
                     footnote = String.format(
                         Locale.UK,
-                        "1h trend: %+.1f%s • target %.0f–%.0f%s",
-                        settings.tempUnit.convert(activeRoom.temperatureC) -
-                            settings.tempUnit.convert(activeRoom.temperatureC - activeRoom.tempTrend1hC),
-                        settings.tempUnit.symbol,
+                        "%s; ideal for this room is %.0f–%.0f%s (1h change: %+.1f%s)",
+                        tempLaymanTrend,
                         settings.tempUnit.convert(activeRoom.archetype.idealTempMinC),
                         settings.tempUnit.convert(activeRoom.archetype.idealTempMaxC),
+                        settings.tempUnit.symbol,
+                        tempDelta,
                         settings.tempUnit.symbol
                     ),
                     accentColor = temperatureAccentColor(activeRoom.temperatureC),
@@ -492,19 +513,28 @@ fun DioramaHomeScreen(
                     modifier = Modifier.weight(1f)
                 )
 
+                val humLaymanLabel = when {
+                    activeRoom.humidityPct < 35f -> "Dry air"
+                    activeRoom.humidityPct <= activeRoom.archetype.idealHumidityMax -> "Comfortable moisture"
+                    activeRoom.humidityPct < activeRoom.archetype.scientificAlertHumidityMaxPct -> "Slightly humid (safe)"
+                    else -> "Damp air"
+                }
                 BentoMetricCard(
-                    title = "Humidity and vapour",
+                    title = "Humidity and moisture",
                     primaryValue = String.format(Locale.UK, "%.0f%%", activeRoom.humidityPct),
                     secondaryLabel = String.format(
                         Locale.UK,
-                        "Absolute: %.1f g/m³",
+                        "%s (%.1f g/m³)",
+                        humLaymanLabel,
                         activeRoom.absoluteHumidityGm3
                     ),
                     footnote = String.format(
                         Locale.UK,
-                        "VPD: %.2f kPa • alert >%.0f%% RH",
-                        activeRoom.vapourPressureDeficitKpa,
-                        activeRoom.archetype.scientificAlertHumidityMaxPct
+                        "Ideal %.0f–%.0f%% RH; mould alert only if >%.0f%% for 4h+ (VPD: %.2f kPa)",
+                        activeRoom.archetype.idealHumidityMin,
+                        activeRoom.archetype.idealHumidityMax,
+                        activeRoom.archetype.scientificAlertHumidityMaxPct,
+                        activeRoom.vapourPressureDeficitKpa
                     ),
                     accentColor = humidityAccentColor(activeRoom.humidityPct),
                     icon = Icons.Outlined.WaterDrop,
@@ -523,27 +553,39 @@ fun DioramaHomeScreen(
                     MouldRiskLevel.MODERATE -> ThermalAmber
                     MouldRiskLevel.HIGH -> ThermalCoral
                 }
+                val dewMarginC = (activeRoom.temperatureC - activeRoom.dewPointC).coerceAtLeast(0f)
                 BentoMetricCard(
-                    title = "Dew point and mould",
+                    title = "Condensation and mould",
                     primaryValue = settings.tempUnit.format(activeRoom.dewPointC),
                     secondaryLabel = activeRoom.mouldRisk.label,
-                    footnote = activeRoom.mouldRisk.detail,
+                    footnote = String.format(
+                        Locale.UK,
+                        "%s (moisture condenses on surfaces below %s, safety margin %.1f°C)",
+                        activeRoom.mouldRisk.detail,
+                        settings.tempUnit.format(activeRoom.dewPointC),
+                        dewMarginC
+                    ),
                     accentColor = mouldColor,
                     icon = Icons.Outlined.WbSunny,
                     modifier = Modifier.weight(1f)
                 )
 
                 val pressureVal = snapshot.pressureHpa
+                val pTrend = snapshot.pressureTrend3hHpa ?: 0f
+                val baroLaymanTrend = when {
+                    pTrend <= -2.0f -> "Falling fast (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)"
+                    pTrend <= -0.7f -> "Easing (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)"
+                    pTrend >= 1.5f -> "Rising (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)"
+                    else -> "Steady (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)"
+                }
                 BentoMetricCard(
-                    title = "GW1200 barometer",
+                    title = "Weather pressure",
                     primaryValue = if (pressureVal != null) {
                         settings.pressureUnit.format(pressureVal)
                     } else {
                         "1015 hPa"
                     },
-                    secondaryLabel = snapshot.pressureTrend3hHpa?.let {
-                        String.format(Locale.UK, "3h delta: %+.1f hPa", it)
-                    } ?: "Steady pressure",
+                    secondaryLabel = baroLaymanTrend,
                     footnote = snapshot.pressureForecastText,
                     accentColor = CoolCyan,
                     icon = Icons.Outlined.Speed,

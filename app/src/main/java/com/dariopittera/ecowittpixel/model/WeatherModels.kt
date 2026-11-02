@@ -16,6 +16,7 @@ enum class RoomArchetype(
     val scientificAlertTempMinC: Float,
     val scientificAlertTempMaxC: Float,
     val scientificAlertHumidityMaxPct: Float,
+    val laymanRule: String,
     val standardCitation: String,
     val standardRationale: String
 ) {
@@ -31,8 +32,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 18.0f,
         scientificAlertTempMaxC = 26.0f,
         scientificAlertHumidityMaxPct = 68.0f,
+        laymanRule = "Daytime lounge: best kept warm and cosy while relaxing",
         standardCitation = "ASHRAE 55, ASHRAE 160, and WHO",
-        standardRationale = "WHO minimum 18°C for living areas; CIBSE overheating limit at 26°C; ASHRAE 160 sustained mould risk threshold at 68% RH (4h+ persistence)"
+        standardRationale = "Sitting still in a lounge feels most comfortable when the air is gently warm and neither dry nor muggy (ideal 20–23.5°C, 40–60% RH; WHO min 18°C; ASHRAE 160 mould alert only if >68% RH for 4+ hours)"
     ),
     BEDROOM(
         id = "bedroom",
@@ -46,8 +48,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 15.5f,
         scientificAlertTempMaxC = 24.0f,
         scientificAlertHumidityMaxPct = 68.0f,
+        laymanRule = "Sleep room: slightly cooler air helps you sleep more deeply",
         standardCitation = "CIBSE Sleep Standard and ASHRAE 160",
-        standardRationale = "Core body cooling for REM sleep requires 16.5–19.5°C; transient 60–65% RH overnight is normal; sustained alert above 68% RH (4h+)"
+        standardRationale = "Your body needs to lower its core temperature to enter deep sleep, and breathing overnight naturally raises room moisture for a few hours (ideal 16.5–19.5°C, 40–58% RH; CIBSE sleep guide; ASHRAE 160 alert only if >68% RH for 4+ hours)"
     ),
     STUDY(
         id = "study",
@@ -61,8 +64,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 18.5f,
         scientificAlertTempMaxC = 25.5f,
         scientificAlertHumidityMaxPct = 68.0f,
+        laymanRule = "Desk and study: steady warmth prevents drowsiness and dry eyes",
         standardCitation = "EN 16798-1 Category I and ASHRAE 160",
-        standardRationale = "Cognitive performance and tear-film stability peak at 20–23.5°C and 40–58% RH; sustained humidity alert above 68% RH"
+        standardRationale = "Moderate warmth and balanced moisture keep your eyes comfortable at screens and prevent stuffy afternoon fatigue (ideal 20–23.5°C, 40–58% RH; EN 16798-1 Category I; ASHRAE 160 alert >68% RH for 4+ hours)"
     ),
     KITCHEN(
         id = "kitchen",
@@ -76,8 +80,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 16.5f,
         scientificAlertTempMaxC = 27.0f,
         scientificAlertHumidityMaxPct = 72.0f,
+        laymanRule = "Cooking area: tolerates short bursts of heat and steam from meals",
         standardCitation = "CIBSE Guide A Kitchen Standard",
-        standardRationale = "Active metabolic rate allows 18–23.5°C; sustained humidity above 72% RH for 4h+ requires extractor ventilation"
+        standardRationale = "Moving around and cooking naturally add heat and steam; only prolonged dampness after cooking needs extra extraction (ideal 18–23.5°C, 38–65% RH; CIBSE Guide A; ASHRAE 160 alert >72% RH for 4+ hours)"
     ),
     BATHROOM(
         id = "bathroom",
@@ -91,8 +96,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 19.5f,
         scientificAlertTempMaxC = 27.5f,
         scientificAlertHumidityMaxPct = 78.0f,
+        laymanRule = "Bath and shower: warmer air stops steam turning into wall condensation",
         standardCitation = "ASHRAE 160 Mould Germination Model",
-        standardRationale = "Prevents prolonged surface water activity aw > 0.80 on tiles and grout; sustained RH above 78% for 4h+ triggers alert"
+        standardRationale = "Keeping the bathroom slightly warmer stops shower steam condensing on cold tiles and mirrors; run the fan if dampness lingers for hours (ideal 21–24.5°C, 40–70% RH; ASHRAE 160 water activity aw < 0.80, alert >78% RH for 4+ hours)"
     ),
     BALCONY_GARDEN(
         id = "balcony_garden",
@@ -106,8 +112,9 @@ enum class RoomArchetype(
         scientificAlertTempMinC = 2.0f,
         scientificAlertTempMaxC = 32.0f,
         scientificAlertHumidityMaxPct = 88.0f,
+        laymanRule = "Outdoor terrace: tracks weather for plants and window ventilation",
         standardCitation = "WMO and RHS Horticultural Standard",
-        standardRationale = "Ground frost alert below 2°C for container plants; heat stress above 32°C; foliar fungal risk above 88% RH"
+        standardRationale = "Watches outdoor conditions to protect balcony plants from frost or heatwave stress and compare outdoor moisture against indoor rooms (ideal 10–26°C, frost alert <2°C, heat alert >32°C, leaf dampness >88% RH • WMO and RHS)"
     );
 
     companion object {
@@ -614,9 +621,9 @@ object Psychrometrics {
     ): String {
         if (indoor.archetype.isOutdoor) {
             val metNote = if (localOutdoor != null) {
-                " • local weather (${localOutdoor.locationName}): ${localOutdoor.conditionLabel.lowercase()}, ${String.format(java.util.Locale.UK, "%.0f", localOutdoor.pressureHpa)} hPa"
+                ", local weather in ${localOutdoor.locationName}: ${localOutdoor.conditionLabel.lowercase()}, ${String.format(java.util.Locale.UK, "%.0f", localOutdoor.pressureHpa)} hPa"
             } else ""
-            return "Outdoor reference sensor: ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ absolute moisture$metNote"
+            return "Outdoor sensor reading: ${indoor.roomName} is at ${tempUnit.format(indoor.temperatureC)} with ${indoor.humidityPct.toInt()}% humidity (${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ water vapour, dew point ${tempUnit.format(indoor.dewPointC)}$metNote)"
         }
 
         val effectiveOut: LocalOutdoorWeather? = localOutdoor ?: if (outdoor != null && outdoor.channelId != indoor.channelId) {
@@ -633,80 +640,93 @@ object Psychrometrics {
             )
         } else null
 
+        val targetTempRange = "${tempUnit.format(indoor.archetype.idealTempMinC)}–${tempUnit.format(indoor.archetype.idealTempMaxC)}"
+        val targetHumRange = "${indoor.archetype.idealHumidityMin.toInt()}–${indoor.archetype.idealHumidityMax.toInt()}% RH"
+
         if (effectiveOut == null) {
             return if (indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct) {
-                "Indoor air holds ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ moisture; run a dehumidifier or ventilate if outdoor air is dry and mild"
+                "Air feels quite damp: run a dehumidifier or open a window if it is dry and mild outside (indoor ${indoor.humidityPct.toInt()}% RH / ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ water vapour; alert threshold >${indoor.archetype.scientificAlertHumidityMaxPct.toInt()}% RH)"
             } else {
-                "Indoor moisture is balanced at ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³"
+                "Room feels comfortable and moisture is well balanced (indoor ${tempUnit.format(indoor.temperatureC)}, ${indoor.humidityPct.toInt()}% RH / ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³; target $targetTempRange, $targetHumRange)"
             }
         }
 
         val absDiff = indoor.absoluteHumidityGm3 - effectiveOut.absoluteHumidityGm3
         val tempDiff = indoor.temperatureC - effectiveOut.temperatureC
-        val outSummary = "${effectiveOut.locationName}: ${tempUnit.format(effectiveOut.temperatureC)}, ${effectiveOut.humidityPct.toInt()}% RH, ${effectiveOut.conditionLabel.lowercase()}"
+        val outSci = "outdoor ${effectiveOut.locationName}: ${tempUnit.format(effectiveOut.temperatureC)}, ${effectiveOut.humidityPct.toInt()}% RH / ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³, ${effectiveOut.conditionLabel.lowercase()}"
+        val inSci = "indoor ${tempUnit.format(indoor.temperatureC)}, ${indoor.humidityPct.toInt()}% RH / ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³"
 
         return when {
             // 1. High indoor humidity above the room's scientific threshold
             indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct -> {
                 when {
                     absDiff < 1.2f ->
-                        "Keep windows closed: outdoor air ($outSummary) holds ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³ moisture and will not dry ${indoor.roomName}; use a dehumidifier"
+                        "Keep windows closed and use a dehumidifier: the room is damp, and the outdoor air is just as humid so opening a window will not dry the room ($inSci vs $outSci)"
                     effectiveOut.isRainingOrSnowing || effectiveOut.precipitationMm >= 0.2f ->
-                        "Keep windows closed (${effectiveOut.conditionLabel.lowercase()} outside in ${effectiveOut.locationName} at ${tempUnit.format(effectiveOut.temperatureC)}): use a dehumidifier or extractor fan instead of opening windows"
+                        "Keep windows closed and run a dehumidifier or extractor fan: the room is humid, but it is ${effectiveOut.conditionLabel.lowercase()} outside so opening windows will not help right now ($inSci; $outSci)"
                     indoor.temperatureC < indoor.archetype.idealTempMinC ->
-                        "Room is cool (${tempUnit.format(indoor.temperatureC)}) and humid (${indoor.humidityPct.toInt()}% RH): raise heating to ${tempUnit.format(indoor.archetype.idealTempMinC)} or run a dehumidifier rather than chilling the room with ${tempUnit.format(effectiveOut.temperatureC)} outdoor air"
+                        "Turn on the heating or a dehumidifier instead of opening windows: the room is both cool and damp, and warming the air to ${tempUnit.format(indoor.archetype.idealTempMinC)} will help dry it without chilling the walls ($inSci; $outSci)"
                     effectiveOut.temperatureC < 6.0f ->
-                        "Cold outdoor air (${tempUnit.format(effectiveOut.temperatureC)} in ${effectiveOut.locationName}): use a dehumidifier or brief 3 min shock ventilation so walls do not chill and condense"
+                        "Use a dehumidifier or air the room for just 3 minutes: it is very cold outside, so leaving windows open would chill the walls and cause condensation ($inSci; $outSci)"
                     effectiveOut.temperatureC > indoor.archetype.idealTempMaxC + 0.8f && effectiveOut.temperatureC > indoor.temperatureC ->
-                        "Keep windows closed: outdoor air is warm (${tempUnit.format(effectiveOut.temperatureC)} in ${effectiveOut.locationName}); use air conditioning or a dehumidifier to dry ${indoor.roomName}"
+                        "Keep windows closed and use air conditioning or a dehumidifier: the room is humid, but it is hot outside ($inSci; $outSci)"
                     effectiveOut.windSpeedKmh >= 38f ->
-                        "High outdoor wind (${effectiveOut.windSpeedKmh.toInt()} km/h in ${effectiveOut.locationName}): use a trickle vent or dehumidifier instead of opening windows wide"
+                        "Use a trickle vent or dehumidifier instead of opening windows wide: it is very windy outside ($inSci; $outSci, wind ${effectiveOut.windSpeedKmh.toInt()} km/h)"
                     effectiveOut.temperatureC < 13.0f ->
-                        "Brief 5 to 10 min ventilation advised: outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ less moisture but is cool"
+                        "Air the room briefly for 5 to 10 minutes: indoor air is damp and outdoor air is drier, so a quick airing will clear the moisture without losing room warmth ($inSci vs $outSci, −${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ drier outside)"
                     else ->
-                        "Open window: indoor humidity is ${indoor.humidityPct.toInt()}% RH and outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ less water vapour"
+                        "Open a window to let damp air out: this room is humid and the outdoor air is drier, so ventilating will naturally lower moisture ($inSci vs $outSci, −${String.format(java.util.Locale.UK, "%.1f", absDiff)} g/m³ drier outside)"
                 }
             }
 
-            // 2. Room is warmer than ideal range
+            // 2. Room is warmer than ideal range for this room type
             indoor.temperatureC > indoor.archetype.idealTempMaxC + 0.5f -> {
                 when {
                     tempDiff >= 1.5f && effectiveOut.temperatureC >= 11.0f && !effectiveOut.isRainingOrSnowing && absDiff >= -1.0f ->
-                        "Open window for natural cooling: outdoor air ($outSummary) is cooler and will bring ${indoor.roomName} into the ${tempUnit.format(indoor.archetype.idealTempMinC)} to ${tempUnit.format(indoor.archetype.idealTempMaxC)} target zone"
+                        "Open a window to cool the room down: it is warmer than ideal for a ${indoor.archetype.title.lowercase()}, and the cooler outdoor breeze will bring it into the comfort zone ($inSci vs target $targetTempRange; $outSci)"
                     effectiveOut.isRainingOrSnowing && tempDiff >= 1.5f ->
-                        "Room is warm (${tempUnit.format(indoor.temperatureC)}), but ${effectiveOut.conditionLabel.lowercase()} is active outside ($outSummary): use a fan or trickle vent"
+                        "Room is warmer than ideal for a ${indoor.archetype.title.lowercase()}, but it is ${effectiveOut.conditionLabel.lowercase()} outside: use a fan or a cracked trickle vent ($inSci vs target $targetTempRange; $outSci)"
                     effectiveOut.temperatureC >= indoor.temperatureC ->
-                        "Keep windows shaded and closed: outdoor air ($outSummary) is warmer than ${indoor.roomName}"
+                        "Keep windows and blinds closed: the room is warm, and it is even warmer outside so keeping heat out is best ($inSci vs target $targetTempRange; $outSci)"
                     else ->
-                        "Room is warm (${tempUnit.format(indoor.temperatureC)}); outdoor air ($outSummary) is ${tempUnit.format(effectiveOut.temperatureC)}"
+                        "Room is slightly warmer than the ideal ${indoor.archetype.title.lowercase()} range ($inSci vs target $targetTempRange; $outSci)"
                 }
             }
 
-            // 3. Room is cooler than ideal range
+            // 3. Room is cooler than ideal range for this room type
             indoor.temperatureC < indoor.archetype.idealTempMinC - 0.5f -> {
                 if (effectiveOut.temperatureC > indoor.temperatureC + 2.0f && !effectiveOut.isRainingOrSnowing && absDiff >= -1.0f) {
-                    "Room is cool (${tempUnit.format(indoor.temperatureC)}), while outdoor air ($outSummary) is milder"
+                    "Room is cooler than ideal for a ${indoor.archetype.title.lowercase()}, while it is milder outside ($inSci vs target $targetTempRange; $outSci)"
                 } else {
-                    "Room is cool (${tempUnit.format(indoor.temperatureC)}) and outdoor air is ${tempUnit.format(effectiveOut.temperatureC)} (${effectiveOut.conditionLabel.lowercase()}): keep windows closed and check heating"
+                    "Keep windows closed and check the heating: this room is cooler than the ideal ${indoor.archetype.title.lowercase()} range ($inSci vs target $targetTempRange; $outSci)"
                 }
             }
 
             // 4. Indoor air is dry (< 35% RH)
             indoor.humidityPct < 35.0f -> {
                 if (absDiff <= -1.5f && effectiveOut.temperatureC in 14f..24f && !effectiveOut.isRainingOrSnowing) {
-                    "Indoor air is dry (${indoor.humidityPct.toInt()}% RH): ventilating with outdoor air ($outSummary) will naturally add moisture"
+                    "Open a window briefly to let fresh moisture in: the air in this room is quite dry, and the mild outdoor air carries more natural moisture ($inSci vs $outSci)"
                 } else {
-                    "Indoor air is dry (${indoor.humidityPct.toInt()}% RH) and outdoor air holds ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³: consider a humidifier"
+                    "Air in this room is quite dry, which can cause dry skin or eyes: consider using a humidifier ($inSci vs target $targetHumRange; $outSci)"
                 }
             }
 
-            // 5. Outdoor air is much more humid while indoor humidity is already moderate-high
-            absDiff < -1.5f && indoor.humidityPct >= 52f ->
-                "Keep windows closed: outdoor air ($outSummary) carries ${String.format(java.util.Locale.UK, "%.1f", -absDiff)} g/m³ more moisture than ${indoor.roomName}"
+            // 5. Slightly above ideal humidity (e.g. 60-67% RH) — reassure the user in plain language!
+            indoor.humidityPct > indoor.archetype.idealHumidityMax -> {
+                if (absDiff >= 1.2f && canRecommendOpeningWindow(indoor, effectiveOut)) {
+                    "Room feels fine with slightly elevated humidity, which is harmless over a few hours; you can crack a window if you want drier air ($inSci; mould alert only above ${indoor.archetype.scientificAlertHumidityMaxPct.toInt()}% RH for 4h+; $outSci)"
+                } else {
+                    "Room feels fine with slightly elevated humidity, which is completely safe over short periods; keep windows closed as outdoor air is not drier ($inSci; mould alert only above ${indoor.archetype.scientificAlertHumidityMaxPct.toInt()}% RH for 4h+; $outSci)"
+                }
+            }
 
-            // 6. Balanced indoor and outdoor climate
+            // 6. Outdoor air is much more humid while indoor humidity is moderate
+            absDiff < -1.5f && indoor.humidityPct >= 52f ->
+                "Room is comfortable right now; keep windows closed if you want to keep out the damper outdoor air ($inSci vs $outSci, +${String.format(java.util.Locale.UK, "%.1f", -absDiff)} g/m³ more moisture outside)"
+
+            // 7. Everything is right in the ideal comfort zone
             else ->
-                "Climate well balanced: indoor ${String.format(java.util.Locale.UK, "%.1f", indoor.absoluteHumidityGm3)} g/m³ vs outdoor ${String.format(java.util.Locale.UK, "%.1f", effectiveOut.absoluteHumidityGm3)} g/m³ ($outSummary)"
+                "Everything feels comfortable and healthy for your ${indoor.archetype.title.lowercase()}, so no action is needed ($inSci, target $targetTempRange and $targetHumRange; $outSci)"
         }
     }
 
@@ -714,12 +734,12 @@ object Psychrometrics {
         if (pressureHpa == null) return "Barometric sensor unavailable"
         val trend = trend3hHpa ?: 0f
         return when {
-            trend <= -2.2f -> "Pressure falling rapidly (${String.format("%+.1f", trend)} hPa/3h): rain or wind front approaching"
-            trend <= -0.8f -> "Pressure easing (${String.format("%+.1f", trend)} hPa/3h): cloud cover increasing"
-            trend >= 1.8f -> "Pressure rising briskly (${String.format("%+.1f", trend)} hPa/3h): clearing skies and drier air"
-            pressureHpa >= 1020f -> "High pressure (${String.format("%.1f", pressureHpa)} hPa): settled and fair conditions"
-            pressureHpa <= 1004f -> "Low pressure (${String.format("%.1f", pressureHpa)} hPa): unsettled weather likely"
-            else -> "Steady barometer (${String.format("%.1f", pressureHpa)} hPa): stable local conditions"
+            trend <= -2.2f -> "Rain or wind front likely approaching soon (pressure falling rapidly: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa, ${String.format(java.util.Locale.UK, "%+.1f", trend)} hPa/3h)"
+            trend <= -0.8f -> "Cloud cover likely increasing (pressure easing: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa, ${String.format(java.util.Locale.UK, "%+.1f", trend)} hPa/3h)"
+            trend >= 1.8f -> "Skies clearing with drier, fairer weather ahead (pressure rising briskly: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa, ${String.format(java.util.Locale.UK, "%+.1f", trend)} hPa/3h)"
+            pressureHpa >= 1020f -> "Settled, calm, and fair weather outdoors (high pressure: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa)"
+            pressureHpa <= 1004f -> "Changeable, unsettled, or wet weather outdoors (low pressure: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa)"
+            else -> "Stable local weather conditions outdoors (steady barometer: ${String.format(java.util.Locale.UK, "%.1f", pressureHpa)} hPa)"
         }
     }
 }
