@@ -579,7 +579,7 @@ fun DioramaHomeScreen(
                     else -> "Steady (${String.format(Locale.UK, "%+.1f", pTrend)} hPa/3h)"
                 }
                 BentoMetricCard(
-                    title = "Weather pressure",
+                    title = "GW1200 barometer",
                     primaryValue = if (pressureVal != null) {
                         settings.pressureUnit.format(pressureVal)
                     } else {
@@ -611,7 +611,7 @@ private fun CompressedMetricsStrip(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "${activeRoom.roomName} summary (scroll for details)",
+                text = "${activeRoom.roomName} climate summary",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -649,7 +649,7 @@ private fun CompressedMetricsStrip(
                     )
                 }
                 Column {
-                    Text("Barometer", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
+                    Text("GW1200 pressure", style = MaterialTheme.typography.labelSmall, color = Color(0xFF90A4AE))
                     Text(
                         snapshot.pressureHpa?.let { settings.pressureUnit.format(it) } ?: "1015 hPa",
                         style = MaterialTheme.typography.titleMedium,
@@ -658,6 +658,13 @@ private fun CompressedMetricsStrip(
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Feels like, dew point, and moisture (g/m³) are calculated directly from this sensor's temperature and humidity. Barometric pressure is measured by the GW1200 gateway for the whole home.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF78909C),
+                fontSize = 10.sp
+            )
         }
     }
 }
