@@ -90,6 +90,12 @@ fun DioramaHomeScreen(
     modifier: Modifier = Modifier
 ) {
     val rooms = snapshot.rooms
+    var stackEnabledChannelIds by remember(rooms.map { it.channelId }) {
+        mutableStateOf(rooms.map { it.channelId }.toSet())
+    }
+    val visibleStackRooms = remember(rooms, stackEnabledChannelIds) {
+        rooms.filter { it.channelId in stackEnabledChannelIds }.ifEmpty { rooms }
+    }
     val safeIdx = selectedRoomIndex.coerceIn(0, (rooms.size - 1).coerceAtLeast(0))
     val activeRoom = rooms.getOrNull(safeIdx) ?: return
     val outdoorReference = snapshot.outdoorRoom
@@ -179,15 +185,54 @@ fun DioramaHomeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. Horizontal Sensor Room Selector Strip
+        // 2. Horizontal Sensor Room Selector Strip (Single-select in Single Room mode; Multi-channel filter in 3D Stack mode)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (wholeHomeOverview && rooms.size > 1) {
+                val allEnabled = stackEnabledChannelIds.size >= rooms.size
+                Surface(
+                    color = if (allEnabled) Color(0xFF1F3654) else PixelSurfaceCard,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(
+                            width = if (allEnabled) 1.8.dp else 1.dp,
+                            color = if (allEnabled) CoolCyan else Color.White.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                        .clickable {
+                            stackEnabledChannelIds = rooms.map { it.channelId }.toSet()
+                        }
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                    ) {
+                        Text(
+                            text = if (allEnabled) "✓ All channels" else "All channels",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (allEnabled) FontWeight.Bold else FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "${stackEnabledChannelIds.size}/${rooms.size} shown in 3D",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF90CAF9)
+                        )
+                    }
+                }
+            }
+
             rooms.forEachIndexed { idx, room ->
-                val isSelected = idx == safeIdx
+                val isSelected = if (wholeHomeOverview) {
+                    room.channelId in stackEnabledChannelIds
+                } else {
+                    idx == safeIdx
+                }
                 val tempCol = temperatureAccentColor(room.temperatureC)
                 Surface(
                     color = if (isSelected) Color(0xFF1F3352) else PixelSurfaceCard,
@@ -199,7 +244,22 @@ fun DioramaHomeScreen(
                             color = if (isSelected) tempCol else Color.White.copy(alpha = 0.08f),
                             shape = RoundedCornerShape(18.dp)
                         )
-                        .clickable { onSelectRoomIndex(idx) }
+                        .clickable {
+                            if (wholeHomeOverview) {
+                                val next = stackEnabledChannelIds.toMutableSet()
+                                if (room.channelId in next) {
+                                    if (next.size > 1) {
+                                        next.remove(room.channelId)
+                                    }
+                                } else {
+                                    next.add(room.channelId)
+                                }
+                                stackEnabledChannelIds = next
+                                onSelectRoomIndex(idx)
+                            } else {
+                                onSelectRoomIndex(idx)
+                            }
+                        }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
@@ -209,20 +269,20 @@ fun DioramaHomeScreen(
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(CircleShape)
-                                .background(tempCol)
+                                .background(if (isSelected) tempCol else tempCol.copy(alpha = 0.3f))
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = room.roomName,
+                                text = (if (wholeHomeOverview && isSelected) "✓ " else "") + room.roomName,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = Color.White
+                                color = if (isSelected) Color.White else Color(0xFF94A3B8)
                             )
                             Text(
                                 text = "${settings.tempUnit.format(room.temperatureC)}  •  ${room.humidityPct.toInt()}% RH",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF90CAF9)
+                                color = if (isSelected) Color(0xFF90CAF9) else Color(0xFF64748B)
                             )
                         }
                     }
@@ -247,7 +307,7 @@ fun DioramaHomeScreen(
                 ) {
                     RoomDioramaCanvas(
                         room = activeRoom,
-                        allRooms = rooms,
+                        allRooms = if (wholeHomeOverview) visibleStackRooms else rooms,
                         wholeHomeOverview = wholeHomeOverview,
                         tempUnit = settings.tempUnit,
                         gyroEnabled = settings.gyroscopeParallaxEnabled,

@@ -87,6 +87,11 @@ private val SERIES_COLORS = listOf(
     Color(0xFFCE93D8)
 )
 
+fun channelSeriesColor(room: SensorRoomState, allRooms: List<SensorRoomState>): Color {
+    val idx = allRooms.indexOfFirst { it.channelId == room.channelId }.let { if (it >= 0) it else 0 }
+    return SERIES_COLORS[idx % SERIES_COLORS.size]
+}
+
 @Composable
 fun MultiRoomSplineChart(
     rooms: List<SensorRoomState>,
@@ -94,22 +99,27 @@ fun MultiRoomSplineChart(
     windowHours: Int,
     tempUnit: TempUnit,
     pressureUnit: PressureUnit,
+    allRooms: List<SensorRoomState> = rooms,
+    enabledChannelIds: Set<String> = rooms.map { it.channelId }.toSet(),
+    onToggleChannel: ((String) -> Unit)? = null,
+    onSelectAllChannels: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     val textMeasurer = rememberTextMeasurer()
     val cutoffMs = System.currentTimeMillis() - windowHours * 3600_000L
 
-    val activeRooms = remember(rooms, metric) {
+    val activeRooms = remember(rooms, metric, enabledChannelIds) {
+        val channelFiltered = rooms.filter { it.channelId in enabledChannelIds }.ifEmpty { rooms }
         if (metric == ChartMetric.PRESSURE) {
-            rooms.filter { it.relativePressureHpa != null }
+            channelFiltered.filter { it.relativePressureHpa != null }
         } else {
-            rooms
+            channelFiltered
         }
     }
 
-    val roomSeries = remember(activeRooms, metric, windowHours, tempUnit, pressureUnit) {
-        activeRooms.mapIndexed { idx, room ->
+    val roomSeries = remember(activeRooms, allRooms, metric, windowHours, tempUnit, pressureUnit) {
+        activeRooms.map { room ->
             val pts = room.history.filter { it.timestampMs >= cutoffMs }
             val values = pts.mapNotNull { pt ->
                 val v = when (metric) {
@@ -124,7 +134,7 @@ fun MultiRoomSplineChart(
                 }
                 if (v != null) Pair(pt.timestampMs, v) else null
             }
-            Triple(room.roomName, SERIES_COLORS[idx % SERIES_COLORS.size], values)
+            Triple(room.roomName, channelSeriesColor(room, allRooms), values)
         }.filter { it.third.size >= 2 }
     }
 
@@ -160,6 +170,78 @@ fun MultiRoomSplineChart(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
+        // Interactive Multi-Channel Filter Bar (show all channels together or toggle specific channels on/off)
+        if (onToggleChannel != null && allRooms.size > 1) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val allEnabled = enabledChannelIds.size >= allRooms.size
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (allEnabled) Color(0xFF1F3654) else Color(0xFF0E1828))
+                        .border(
+                            width = 1.dp,
+                            color = if (allEnabled) CoolCyan else Color.White.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            onSelectAllChannels?.invoke()
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (allEnabled) "✓ All channels (${allRooms.size})" else "All channels (${allRooms.size})",
+                        color = if (allEnabled) Color.White else Color(0xFF94A3B8),
+                        fontWeight = if (allEnabled) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = 11.sp
+                    )
+                }
+
+                allRooms.forEach { room ->
+                    val isEnabled = room.channelId in enabledChannelIds
+                    val sColor = channelSeriesColor(room, allRooms)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isEnabled) Color(0xFF1A2F4B) else Color(0xFF0B1320))
+                            .border(
+                                width = if (isEnabled) 1.5.dp else 1.dp,
+                                color = if (isEnabled) sColor else Color.White.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clickable {
+                                onToggleChannel(room.channelId)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isEnabled) sColor else sColor.copy(alpha = 0.3f))
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = (if (isEnabled) "✓ " else "") + room.roomName.substringBefore(" ("),
+                                color = if (isEnabled) Color.White else Color(0xFF64748B),
+                                fontWeight = if (isEnabled) FontWeight.SemiBold else FontWeight.Normal,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
         // Interactive Scrubbing Header
         Surface(
             color = Color(0xFF0E1828),
@@ -352,6 +434,7 @@ fun MultiRoomSplineChart(
 fun PsychrometricComfortScatterChart(
     rooms: List<SensorRoomState>,
     tempUnit: TempUnit,
+    allRooms: List<SensorRoomState> = rooms,
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -496,7 +579,7 @@ fun PsychrometricComfortScatterChart(
             }
 
             rooms.forEachIndexed { idx, room ->
-                val color = SERIES_COLORS[idx % SERIES_COLORS.size]
+                val color = channelSeriesColor(room, allRooms)
                 val isSelected = focusedRoomIdx == idx
                 Box(
                     modifier = Modifier
@@ -754,7 +837,7 @@ fun PsychrometricComfortScatterChart(
                 rooms.forEachIndexed { idx, room ->
                     val isDimmed = focusedRoomIdx != null && focusedRoomIdx != idx
                     val alphaMul = if (isDimmed) 0.25f else 1f
-                    val color = SERIES_COLORS[idx % SERIES_COLORS.size]
+                    val color = channelSeriesColor(room, allRooms)
                     val recent24h = room.history.takeLast(32)
                     if (recent24h.size >= 2) {
                         val trailPath = Path()

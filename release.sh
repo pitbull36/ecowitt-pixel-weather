@@ -74,6 +74,7 @@ PHONE_APK_DEST="app/build/outputs/apk/release/ecowitt-pixel-weather-v${VERSION_N
   "$PHONE_APK_SOURCE"
 
 cp "$PHONE_APK_SOURCE" "$PHONE_APK_DEST"
+cp app/src/main/res/raw/wearos_app.apk "$WATCH_APK_DEST"
 echo "==> Built and v1+v2+v3 signed Pixel 10 APK: $PHONE_APK_DEST"
 
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then

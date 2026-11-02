@@ -67,6 +67,12 @@ fun AnalyticsScreen(
     var heatmapHumidity by remember { mutableStateOf(false) }
 
     val rooms = snapshot.rooms
+    var enabledChannelIds by remember(rooms.map { it.channelId }) {
+        mutableStateOf(rooms.map { it.channelId }.toSet())
+    }
+    val filteredRooms = remember(rooms, enabledChannelIds) {
+        rooms.filter { it.channelId in enabledChannelIds }.ifEmpty { rooms }
+    }
     val focusedRoom = rooms.getOrNull(focusedRoomIdx.coerceIn(0, (rooms.size - 1).coerceAtLeast(0)))
     val totalHistorySamples = remember(rooms) { rooms.sumOf { it.history.size } }
 
@@ -215,11 +221,27 @@ fun AnalyticsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 MultiRoomSplineChart(
-                    rooms = rooms,
+                    rooms = filteredRooms,
                     metric = selectedMetric,
                     windowHours = windowHours,
                     tempUnit = settings.tempUnit,
-                    pressureUnit = settings.pressureUnit
+                    pressureUnit = settings.pressureUnit,
+                    allRooms = rooms,
+                    enabledChannelIds = enabledChannelIds,
+                    onToggleChannel = { chId ->
+                        val next = enabledChannelIds.toMutableSet()
+                        if (chId in next) {
+                            if (next.size > 1) {
+                                next.remove(chId)
+                            }
+                        } else {
+                            next.add(chId)
+                        }
+                        enabledChannelIds = next
+                    },
+                    onSelectAllChannels = {
+                        enabledChannelIds = rooms.map { it.channelId }.toSet()
+                    }
                 )
             }
         }
@@ -234,8 +256,9 @@ fun AnalyticsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 PsychrometricComfortScatterChart(
-                    rooms = rooms,
-                    tempUnit = settings.tempUnit
+                    rooms = filteredRooms,
+                    tempUnit = settings.tempUnit,
+                    allRooms = rooms
                 )
             }
         }
