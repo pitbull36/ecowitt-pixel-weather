@@ -766,7 +766,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 6. Display Units & 3D Gyroscope Parallax Card
+        // 6. Display Units Card
         Card(
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = PixelSurfaceCard),
@@ -774,7 +774,7 @@ fun SettingsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "Display units and 3D parallax",
+                    text = "Display units",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White
@@ -805,29 +805,6 @@ fun SettingsScreen(
                             label = { Text(p.label) }
                         )
                     }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Gyroscope 3D tilt parallax", color = Color.White)
-                        Text(
-                            "Tilts the 3D room diorama gently as you move your phone",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFB0BEC5)
-                        )
-                    }
-                    Switch(
-                        checked = settings.gyroscopeParallaxEnabled,
-                        onCheckedChange = {
-                            onUpdateSettings(settings.copy(gyroscopeParallaxEnabled = it))
-                        }
-                    )
                 }
             }
         }

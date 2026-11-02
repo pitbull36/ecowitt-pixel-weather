@@ -310,7 +310,7 @@ fun DioramaHomeScreen(
                         allRooms = if (wholeHomeOverview) visibleStackRooms else rooms,
                         wholeHomeOverview = wholeHomeOverview,
                         tempUnit = settings.tempUnit,
-                        gyroEnabled = settings.gyroscopeParallaxEnabled,
+                        gyroEnabled = true,
                         timeOfDayHours = simParams.timeOfDayHours,
                         onSelectRoomIndex = onSelectRoomIndex,
                         modifier = Modifier.fillMaxSize()
