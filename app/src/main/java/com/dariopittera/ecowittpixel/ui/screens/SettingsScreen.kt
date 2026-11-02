@@ -480,13 +480,13 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = "Rooms and alert thresholds",
+                            text = "Rooms and 3D scene presets",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
                         )
                         Text(
-                            text = "Select a room below to rename it, choose its 3D scene, and adjust alert limits.",
+                            text = "Select a room below to rename it and choose its 3D scene preset.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFB0BEC5)
                         )
@@ -601,150 +601,33 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Clean scientific standard summary box
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF142236)),
+                    Text(
+                        text = "${draftCfg.archetype.standardCitation} • ${draftCfg.archetype.standardRationale}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF90A4AE),
+                        fontSize = 11.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            onUpdateRoomConfig(selectedRoom.channelId, draftCfg, true)
+                            justSaved = true
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (hasUnsavedChanges) ComfortEmerald else CoolCyan
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Room threshold alerts",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = draftCfg.archetype.standardCitation,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = ThermalAmber
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Switch(
-                                    checked = draftCfg.alertsEnabled,
-                                    onCheckedChange = {
-                                        draftCfg = draftCfg.copy(alertsEnabled = it)
-                                        justSaved = false
-                                    }
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = draftCfg.archetype.standardRationale,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFB0BEC5),
-                                fontSize = 11.sp
-                            )
-
-                            if (draftCfg.alertsEnabled) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Slider 1: Min Temperature
-                                ThresholdSliderRow(
-                                    label = "Minimum temperature",
-                                    valueText = String.format(Locale.UK, "%.1f°C", draftCfg.alertTempMinC),
-                                    value = draftCfg.alertTempMinC,
-                                    valueRange = 0f..24f,
-                                    onValueChange = {
-                                        draftCfg = draftCfg.copy(alertTempMinC = it)
-                                        justSaved = false
-                                    }
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                // Slider 2: Max Temperature
-                                ThresholdSliderRow(
-                                    label = "Maximum temperature",
-                                    valueText = String.format(Locale.UK, "%.1f°C", draftCfg.alertTempMaxC),
-                                    value = draftCfg.alertTempMaxC,
-                                    valueRange = 20f..36f,
-                                    onValueChange = {
-                                        draftCfg = draftCfg.copy(alertTempMaxC = it)
-                                        justSaved = false
-                                    }
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                // Slider 3: Max Humidity
-                                ThresholdSliderRow(
-                                    label = "Maximum humidity",
-                                    valueText = String.format(Locale.UK, "%.0f%% RH", draftCfg.alertHumidityMaxPct),
-                                    value = draftCfg.alertHumidityMaxPct,
-                                    valueRange = 45f..90f,
-                                    onValueChange = {
-                                        draftCfg = draftCfg.copy(alertHumidityMaxPct = it)
-                                        justSaved = false
-                                    }
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-                                OutlinedButton(
-                                    onClick = {
-                                        draftCfg = draftCfg.copy(
-                                            alertTempMinC = draftCfg.archetype.scientificAlertTempMinC,
-                                            alertTempMaxC = draftCfg.archetype.scientificAlertTempMaxC,
-                                            alertHumidityMaxPct = draftCfg.archetype.scientificAlertHumidityMaxPct
-                                        )
-                                        justSaved = false
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.RestartAlt,
-                                        contentDescription = "Reset thresholds",
-                                        modifier = Modifier.size(16.dp),
-                                        tint = CoolCyan
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = String.format(
-                                            Locale.UK,
-                                            "Reset to %s standard (%.0f–%.0f°C, ≤%.0f%%)",
-                                            draftCfg.archetype.title.lowercase(Locale.UK),
-                                            draftCfg.archetype.scientificAlertTempMinC,
-                                            draftCfg.archetype.scientificAlertTempMaxC,
-                                            draftCfg.archetype.scientificAlertHumidityMaxPct
-                                        ),
-                                        fontSize = 11.sp,
-                                        color = CoolCyan
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Button(
-                                onClick = {
-                                    onUpdateRoomConfig(selectedRoom.channelId, draftCfg, true)
-                                    justSaved = true
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (hasUnsavedChanges) ComfortEmerald else CoolCyan
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = when {
-                                        hasUnsavedChanges -> "Save room settings and thresholds"
-                                        justSaved -> "Saved room thresholds ✓"
-                                        else -> "Save room settings and thresholds"
-                                    },
-                                    color = Color(0xFF06211E),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                        Text(
+                            text = when {
+                                hasUnsavedChanges -> "Save room settings"
+                                justSaved -> "Saved room settings ✓"
+                                else -> "Save room settings"
+                            },
+                            color = Color(0xFF06211E),
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

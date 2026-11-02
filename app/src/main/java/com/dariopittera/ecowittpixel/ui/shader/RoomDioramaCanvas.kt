@@ -17,7 +17,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,23 +119,34 @@ private class IsoCamera(
     }
 }
 
-private enum class StackGestureMode {
-    MOVE_ROOM,
-    TILT_ROOM
-}
-
 private data class RoomSpatialPose(
     val xNorm: Float,
     val yNorm: Float,
-    val yawOffset: Float = 0f,
-    val pitchOffset: Float = 0f
+    val zoom: Float = 1.0f
 )
 
 private fun defaultRoomPose(idx: Int, totalCount: Int): RoomSpatialPose {
     val count = totalCount.coerceAtLeast(1)
-    val yNorm = if (count > 1) 0.22f + idx * (0.60f / (count - 1).toFloat()) else 0.52f
-    val xNorm = 0.34f + (idx % 2) * 0.10f
-    return RoomSpatialPose(xNorm = xNorm, yNorm = yNorm, yawOffset = 0f, pitchOffset = 0f)
+    return if (count <= 3) {
+        val yNorm = if (count > 1) 0.22f + idx * (0.60f / (count - 1).toFloat()) else 0.52f
+        val xNorm = 0.34f + (idx % 2) * 0.12f
+        RoomSpatialPose(xNorm = xNorm, yNorm = yNorm, zoom = 1.0f)
+    } else {
+        // 2-column staggered layout so 4, 6, 8+ sensor rooms fit cleanly without overlapping
+        val cols = 2
+        val rows = ((count + cols - 1) / cols).coerceAtLeast(1)
+        val col = idx % cols
+        val row = idx / cols
+        val xNorm = if (col == 0) 0.27f else 0.67f
+        val ySpan = 0.64f
+        val yBase = if (rows > 1) 0.20f + row * (ySpan / (rows - 1).toFloat()) else 0.50f
+        val yStagger = if (col == 1 && rows > 1) 0.03f else 0f
+        RoomSpatialPose(
+            xNorm = xNorm,
+            yNorm = (yBase + yStagger).coerceIn(0.16f, 0.86f),
+            zoom = 1.0f
+        )
+    }
 }
 
 @Composable
@@ -152,24 +168,33 @@ fun RoomDioramaCanvas(
 
     var gyroTiltX by remember { mutableFloatStateOf(0f) }
     var gyroTiltY by remember { mutableFloatStateOf(0f) }
-    var userDragYaw by remember { mutableFloatStateOf(0f) }
-    var userDragPitch by remember { mutableFloatStateOf(0f) }
+    var singleRoomZoom by remember { mutableFloatStateOf(1.0f) }
 
-    var stackGestureMode by remember { mutableStateOf(StackGestureMode.MOVE_ROOM) }
-    var activeDraggedChannelId by remember { mutableStateOf<String?>(null) }
-
-    // Per-room spatial position (drag & drop) and individual 3D tilt (yaw & pitch)
+    // Per-room spatial position (drag & drop) and individual zoom factor
     val roomPoses = remember { mutableStateMapOf<String, RoomSpatialPose>() }
+    val undoStack = remember { mutableStateListOf<Map<String, RoomSpatialPose>>() }
+    val redoStack = remember { mutableStateListOf<Map<String, RoomSpatialPose>>() }
 
-    // Populate initial poses from SharedPreferences or defaults
+    // Populate initial poses from SharedPreferences or auto-fit defaults
     allRooms.forEachIndexed { idx, r ->
         if (!roomPoses.containsKey(r.channelId)) {
-            val saved = prefs.getString("pose_${r.channelId}", null)
+            val saved = prefs.getString("pose_v2_${r.channelId}", null)
+                ?: prefs.getString("pose_${r.channelId}", null)
             val parsed = saved?.split(",")?.mapNotNull { it.toFloatOrNull() }
-            roomPoses[r.channelId] = if (parsed != null && parsed.size == 4) {
-                RoomSpatialPose(parsed[0], parsed[1], parsed[2], parsed[3])
-            } else {
-                defaultRoomPose(idx, allRooms.size)
+            roomPoses[r.channelId] = when {
+                parsed != null && parsed.size == 3 ->
+                    RoomSpatialPose(
+                        xNorm = parsed[0].coerceIn(0.14f, 0.86f),
+                        yNorm = parsed[1].coerceIn(0.14f, 0.88f),
+                        zoom = parsed[2].coerceIn(0.45f, 2.20f)
+                    )
+                parsed != null && parsed.size == 4 ->
+                    RoomSpatialPose(
+                        xNorm = parsed[0].coerceIn(0.14f, 0.86f),
+                        yNorm = parsed[1].coerceIn(0.14f, 0.88f),
+                        zoom = 1.0f
+                    )
+                else -> defaultRoomPose(idx, allRooms.size)
             }
         }
     }
@@ -177,10 +202,28 @@ fun RoomDioramaCanvas(
     fun savePoseToPrefs(channelId: String, pose: RoomSpatialPose) {
         prefs.edit()
             .putString(
-                "pose_$channelId",
-                "${pose.xNorm},${pose.yNorm},${pose.yawOffset},${pose.pitchOffset}"
+                "pose_v2_$channelId",
+                "${pose.xNorm},${pose.yNorm},${pose.zoom}"
             )
             .apply()
+    }
+
+    fun saveAllPosesToPrefs(snapshotMap: Map<String, RoomSpatialPose>) {
+        val editor = prefs.edit()
+        snapshotMap.forEach { (chId, pose) ->
+            editor.putString("pose_v2_$chId", "${pose.xNorm},${pose.yNorm},${pose.zoom}")
+        }
+        editor.apply()
+    }
+
+    fun pushUndoState(beforeState: Map<String, RoomSpatialPose>) {
+        if (undoStack.lastOrNull() != beforeState) {
+            undoStack.add(beforeState.toMap())
+            if (undoStack.size > 30) {
+                undoStack.removeAt(0)
+            }
+            redoStack.clear()
+        }
     }
 
     DisposableEffect(gyroEnabled) {
@@ -246,16 +289,27 @@ fun RoomDioramaCanvas(
                 .fillMaxSize()
                 .pointerInput(wholeHomeOverview, allRooms.size) {
                     detectTapGestures(
-                        onDoubleTap = {
-                            if (wholeHomeOverview) {
-                                allRooms.forEachIndexed { idx, r ->
-                                    val defPose = defaultRoomPose(idx, allRooms.size)
-                                    roomPoses[r.channelId] = defPose
-                                    savePoseToPrefs(r.channelId, defPose)
-                                }
+                        onDoubleTap = { tapOffset ->
+                            if (wholeHomeOverview && allRooms.isNotEmpty()) {
+                                val nearestIdx = allRooms.indices.minByOrNull { idx ->
+                                    val r = allRooms[idx]
+                                    val pose = roomPoses[r.channelId] ?: defaultRoomPose(idx, allRooms.size)
+                                    hypot(
+                                        tapOffset.x - pose.xNorm * size.width,
+                                        tapOffset.y - pose.yNorm * size.height
+                                    )
+                                } ?: 0
+                                onSelectRoomIndex(nearestIdx)
+                                val chId = allRooms[nearestIdx].channelId
+                                val before = roomPoses.toMap()
+                                val curPose = roomPoses[chId] ?: defaultRoomPose(nearestIdx, allRooms.size)
+                                val nextZoom = if (curPose.zoom < 1.25f) 1.45f else 1.0f
+                                val updated = curPose.copy(zoom = nextZoom)
+                                pushUndoState(before)
+                                roomPoses[chId] = updated
+                                savePoseToPrefs(chId, updated)
                             } else {
-                                userDragYaw = 0f
-                                userDragPitch = 0f
+                                singleRoomZoom = if (singleRoomZoom < 1.2f) 1.35f else 1.0f
                             }
                         },
                         onTap = { tapOffset ->
@@ -273,55 +327,78 @@ fun RoomDioramaCanvas(
                         }
                     )
                 }
-                .pointerInput(wholeHomeOverview, stackGestureMode, allRooms.size) {
-                    detectDragGestures(
-                        onDragStart = { downOffset ->
-                            if (wholeHomeOverview && allRooms.isNotEmpty()) {
-                                val nearestIdx = allRooms.indices.minByOrNull { idx ->
-                                    val r = allRooms[idx]
-                                    val pose = roomPoses[r.channelId] ?: defaultRoomPose(idx, allRooms.size)
-                                    hypot(
-                                        downOffset.x - pose.xNorm * size.width,
-                                        downOffset.y - pose.yNorm * size.height
-                                    )
-                                } ?: 0
-                                activeDraggedChannelId = allRooms[nearestIdx].channelId
-                                onSelectRoomIndex(nearestIdx)
-                            } else {
-                                activeDraggedChannelId = null
-                            }
-                        },
-                        onDragEnd = {
-                            activeDraggedChannelId?.let { chId ->
-                                roomPoses[chId]?.let { savePoseToPrefs(chId, it) }
-                            }
-                            activeDraggedChannelId = null
-                        },
-                        onDragCancel = {
-                            activeDraggedChannelId = null
-                        }
-                    ) { change, dragAmount ->
-                        change.consume()
+                .pointerInput(wholeHomeOverview, allRooms.size) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val beforeGestureSnapshot = roomPoses.toMap()
+                        var gestureChangedPose = false
+                        var targetChannelId: String? = null
+
                         if (wholeHomeOverview && allRooms.isNotEmpty()) {
-                            val chId = activeDraggedChannelId ?: room.channelId
-                            val currentIdx = allRooms.indexOfFirst { it.channelId == chId }.coerceAtLeast(0)
-                            val curPose = roomPoses[chId] ?: defaultRoomPose(currentIdx, allRooms.size)
-                            if (stackGestureMode == StackGestureMode.MOVE_ROOM) {
-                                val nextX = (curPose.xNorm + dragAmount.x / size.width.toFloat().coerceAtLeast(1f))
-                                    .coerceIn(0.18f, 0.82f)
-                                val nextY = (curPose.yNorm + dragAmount.y / size.height.toFloat().coerceAtLeast(1f))
-                                    .coerceIn(0.16f, 0.86f)
-                                roomPoses[chId] = curPose.copy(xNorm = nextX, yNorm = nextY)
-                            } else {
-                                val nextYaw = (curPose.yawOffset + dragAmount.x * 0.0055f)
-                                    .coerceIn(-0.65f, 0.65f)
-                                val nextPitch = (curPose.pitchOffset + dragAmount.y * 0.0040f)
-                                    .coerceIn(-0.24f, 0.24f)
-                                roomPoses[chId] = curPose.copy(yawOffset = nextYaw, pitchOffset = nextPitch)
+                            val nearestIdx = allRooms.indices.minByOrNull { idx ->
+                                val r = allRooms[idx]
+                                val pose = roomPoses[r.channelId] ?: defaultRoomPose(idx, allRooms.size)
+                                hypot(
+                                    down.position.x - pose.xNorm * size.width,
+                                    down.position.y - pose.yNorm * size.height
+                                )
+                            } ?: 0
+                            targetChannelId = allRooms[nearestIdx].channelId
+                            onSelectRoomIndex(nearestIdx)
+                        }
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressedCount = event.changes.count { it.pressed }
+                            if (pressedCount >= 2) {
+                                // Two-finger pinch-to-zoom on the selected room
+                                val zoomChange = event.calculateZoom()
+                                if (kotlin.math.abs(zoomChange - 1f) > 0.004f) {
+                                    if (wholeHomeOverview && allRooms.isNotEmpty()) {
+                                        val centroid = event.calculateCentroid(useCurrent = true)
+                                        val chId = targetChannelId ?: run {
+                                            val nearestIdx = allRooms.indices.minByOrNull { idx ->
+                                                val r = allRooms[idx]
+                                                val pose = roomPoses[r.channelId] ?: defaultRoomPose(idx, allRooms.size)
+                                                hypot(
+                                                    centroid.x - pose.xNorm * size.width,
+                                                    centroid.y - pose.yNorm * size.height
+                                                )
+                                            } ?: 0
+                                            onSelectRoomIndex(nearestIdx)
+                                            allRooms[nearestIdx].channelId
+                                        }
+                                        targetChannelId = chId
+                                        val idx = allRooms.indexOfFirst { it.channelId == chId }.coerceAtLeast(0)
+                                        val curPose = roomPoses[chId] ?: defaultRoomPose(idx, allRooms.size)
+                                        val nextZoom = (curPose.zoom * zoomChange).coerceIn(0.45f, 2.20f)
+                                        roomPoses[chId] = curPose.copy(zoom = nextZoom)
+                                        gestureChangedPose = true
+                                    } else {
+                                        singleRoomZoom = (singleRoomZoom * zoomChange).coerceIn(0.60f, 1.85f)
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                }
+                            } else if (pressedCount == 1 && wholeHomeOverview && allRooms.isNotEmpty()) {
+                                val pan = event.calculatePan()
+                                if (hypot(pan.x, pan.y) > 0.5f) {
+                                    val chId = targetChannelId ?: room.channelId
+                                    val currentIdx = allRooms.indexOfFirst { it.channelId == chId }.coerceAtLeast(0)
+                                    val curPose = roomPoses[chId] ?: defaultRoomPose(currentIdx, allRooms.size)
+                                    val nextX = (curPose.xNorm + pan.x / size.width.toFloat().coerceAtLeast(1f))
+                                        .coerceIn(0.14f, 0.86f)
+                                    val nextY = (curPose.yNorm + pan.y / size.height.toFloat().coerceAtLeast(1f))
+                                        .coerceIn(0.14f, 0.88f)
+                                    roomPoses[chId] = curPose.copy(xNorm = nextX, yNorm = nextY)
+                                    gestureChangedPose = true
+                                    event.changes.forEach { it.consume() }
+                                }
                             }
-                        } else {
-                            userDragYaw = (userDragYaw + dragAmount.x * 0.0045f).coerceIn(-0.55f, 0.55f)
-                            userDragPitch = (userDragPitch + dragAmount.y * 0.003f).coerceIn(-0.22f, 0.22f)
+                        } while (event.changes.any { it.pressed })
+
+                        if (gestureChangedPose && targetChannelId != null) {
+                            pushUndoState(beforeGestureSnapshot)
+                            roomPoses[targetChannelId]?.let { savePoseToPrefs(targetChannelId, it) }
                         }
                     }
                 }
@@ -331,8 +408,8 @@ fun RoomDioramaCanvas(
                 agslShader.setFloatUniform("time", animPhase)
                 agslShader.setFloatUniform("tempNorm", tempNorm)
                 agslShader.setFloatUniform("humidityNorm", humidityNorm)
-                agslShader.setFloatUniform("tiltX", gyroTiltX + userDragYaw)
-                agslShader.setFloatUniform("tiltY", gyroTiltY + userDragPitch)
+                agslShader.setFloatUniform("tiltX", gyroTiltX)
+                agslShader.setFloatUniform("tiltY", gyroTiltY)
                 drawRect(brush = ShaderBrush(agslShader), size = size)
             } else {
                 drawRect(
@@ -348,8 +425,9 @@ fun RoomDioramaCanvas(
                 )
             }
 
-            val baseYaw = 0.785398f + gyroTiltX * 0.28f + userDragYaw
-            val basePitch = (0.54f + gyroTiltY * 0.18f + userDragPitch).coerceIn(0.32f, 0.78f)
+            // Automatic 3D tilt driven purely by the phone accelerometer/gravity sensor
+            val baseYaw = 0.785398f + gyroTiltX * 0.28f
+            val basePitch = (0.54f + gyroTiltY * 0.18f).coerceIn(0.32f, 0.78f)
 
             if (wholeHomeOverview && allRooms.isNotEmpty()) {
                 drawWholeHomeIsoStack(
@@ -365,7 +443,7 @@ fun RoomDioramaCanvas(
                     textMeasurer = textMeasurer
                 )
             } else {
-                val scale = size.minDimension * 0.35f
+                val scale = size.minDimension * 0.35f * singleRoomZoom
                 val cam = IsoCamera(
                     centerX = size.width * 0.47f,
                     centerY = size.height * 0.63f,
@@ -387,6 +465,12 @@ fun RoomDioramaCanvas(
         }
 
         if (wholeHomeOverview && allRooms.isNotEmpty()) {
+            val activeChId = room.channelId
+            val activeIdx = allRooms.indexOfFirst { it.channelId == activeChId }.coerceAtLeast(0)
+            val activePose = roomPoses[activeChId] ?: defaultRoomPose(activeIdx, allRooms.size)
+            val canUndo = undoStack.isNotEmpty()
+            val canRedo = redoStack.isNotEmpty()
+
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -397,48 +481,179 @@ fun RoomDioramaCanvas(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val isMove = stackGestureMode == StackGestureMode.MOVE_ROOM
                 Text(
                     text = "Move rooms",
-                    color = if (isMove) Color(0xFF0A121E) else Color(0xFFCBD5E1),
+                    color = Color(0xFF0A121E),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
-                        .background(
-                            if (isMove) Color(0xFF38BDF8) else Color.Transparent,
-                            RoundedCornerShape(14.dp)
-                        )
-                        .clickable { stackGestureMode = StackGestureMode.MOVE_ROOM }
-                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                        .background(Color(0xFF38BDF8), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
+
+                // Zoom out selected room
                 Text(
-                    text = "Tilt room",
-                    color = if (!isMove) Color(0xFF0A121E) else Color(0xFFCBD5E1),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "−",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier
-                        .background(
-                            if (!isMove) Color(0xFFFFB74D) else Color.Transparent,
-                            RoundedCornerShape(14.dp)
-                        )
-                        .clickable { stackGestureMode = StackGestureMode.TILT_ROOM }
-                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                        .background(Color(0xFF172A45), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val before = roomPoses.toMap()
+                            val updated = activePose.copy(
+                                zoom = (activePose.zoom - 0.15f).coerceIn(0.45f, 2.20f)
+                            )
+                            if (updated != activePose) {
+                                pushUndoState(before)
+                                roomPoses[activeChId] = updated
+                                savePoseToPrefs(activeChId, updated)
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
                 )
+
+                Text(
+                    text = "${(activePose.zoom * 100).toInt()}%",
+                    color = Color(0xFF90CAF9),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+
+                // Zoom in selected room
+                Text(
+                    text = "+",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Color(0xFF172A45), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val before = roomPoses.toMap()
+                            val updated = activePose.copy(
+                                zoom = (activePose.zoom + 0.15f).coerceIn(0.45f, 2.20f)
+                            )
+                            if (updated != activePose) {
+                                pushUndoState(before)
+                                roomPoses[activeChId] = updated
+                                savePoseToPrefs(activeChId, updated)
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+
+                // Undo symbol (↶) before Reset
+                Text(
+                    text = "↶",
+                    color = if (canUndo) Color(0xFF38BDF8) else Color(0xFF475569),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Color(0xFF132238), RoundedCornerShape(10.dp))
+                        .clickable(enabled = canUndo) {
+                            if (undoStack.isNotEmpty()) {
+                                val prev = undoStack.removeAt(undoStack.lastIndex)
+                                redoStack.add(roomPoses.toMap())
+                                roomPoses.clear()
+                                roomPoses.putAll(prev)
+                                saveAllPosesToPrefs(prev)
+                            }
+                        }
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                )
+
+                // Redo symbol (↷) before Reset
+                Text(
+                    text = "↷",
+                    color = if (canRedo) Color(0xFF38BDF8) else Color(0xFF475569),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Color(0xFF132238), RoundedCornerShape(10.dp))
+                        .clickable(enabled = canRedo) {
+                            if (redoStack.isNotEmpty()) {
+                                val next = redoStack.removeAt(redoStack.lastIndex)
+                                undoStack.add(roomPoses.toMap())
+                                roomPoses.clear()
+                                roomPoses.putAll(next)
+                                saveAllPosesToPrefs(next)
+                            }
+                        }
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                )
+
                 Text(
                     text = "Reset",
-                    color = Color(0xFF94A3B8),
+                    color = Color(0xFFCBD5E1),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .clickable {
+                            pushUndoState(roomPoses.toMap())
                             allRooms.forEachIndexed { idx, r ->
                                 val defPose = defaultRoomPose(idx, allRooms.size)
                                 roomPoses[r.channelId] = defPose
                                 savePoseToPrefs(r.channelId, defPose)
                             }
                         }
-                        .padding(horizontal = 7.dp, vertical = 4.dp)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
                 )
+            }
+        } else {
+            // Single room zoom bar (pinch or tap - / + / Reset)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .background(Color(0xD90B1424), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color(0x4438BDF8), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "−",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Color(0xFF172A45), RoundedCornerShape(10.dp))
+                        .clickable {
+                            singleRoomZoom = (singleRoomZoom - 0.15f).coerceIn(0.60f, 1.85f)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                Text(
+                    text = "${(singleRoomZoom * 100).toInt()}%",
+                    color = Color(0xFF90CAF9),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+                Text(
+                    text = "+",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(Color(0xFF172A45), RoundedCornerShape(10.dp))
+                        .clickable {
+                            singleRoomZoom = (singleRoomZoom + 0.15f).coerceIn(0.60f, 1.85f)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                if (kotlin.math.abs(singleRoomZoom - 1.0f) > 0.01f) {
+                    Text(
+                        text = "Reset",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clickable { singleRoomZoom = 1.0f }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }
@@ -457,21 +672,27 @@ private fun DrawScope.drawWholeHomeIsoStack(
     textMeasurer: androidx.compose.ui.text.TextMeasurer
 ) {
     val count = rooms.size.coerceAtLeast(1)
-    val scale = size.minDimension * 0.22f
+    // Automatically shrink rooms when more sensors are connected so all rooms fit comfortably
+    val autoFitFactor = when {
+        count <= 1 -> 1.18f
+        count == 2 -> 1.05f
+        count == 3 -> 1.00f
+        else -> (1.70f / kotlin.math.sqrt(count.toFloat())).coerceIn(0.48f, 0.90f)
+    }
+    val baseScale = size.minDimension * 0.22f * autoFitFactor
 
     rooms.forEachIndexed { idx, r ->
         val pose = roomPoses[r.channelId] ?: defaultRoomPose(idx, count)
         val cx = pose.xNorm * size.width
         val cy = pose.yNorm * size.height
-        val roomYaw = (baseYaw + pose.yawOffset).coerceIn(0.18f, 1.40f)
-        val roomPitch = (basePitch + pose.pitchOffset).coerceIn(0.28f, 0.80f)
         val isSelected = r.channelId == selectedChannelId
+        val roomScale = baseScale * pose.zoom * (if (isSelected) 1.05f else 0.96f)
         val cam = IsoCamera(
             centerX = cx,
             centerY = cy,
-            scale = if (isSelected) scale * 1.06f else scale * 0.95f,
-            yawRad = roomYaw,
-            pitchRad = roomPitch
+            scale = roomScale,
+            yawRad = baseYaw,
+            pitchRad = basePitch
         )
 
         drawSingleRoomDiorama(

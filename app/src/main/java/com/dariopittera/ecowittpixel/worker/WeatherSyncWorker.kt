@@ -178,71 +178,9 @@ class WeatherSyncWorker(
 
             val outdoor = snapshot.outdoorRoom
 
-            // 1. Per-room scientific and customisable min/max temperature & humidity criteria
+            // Smart environmental triggers & custom user-defined criteria per room
             snapshot.rooms.forEachIndexed { idx, room ->
-                val cfg = settings.roomConfigs[room.channelId]
-                val alertsOn = cfg?.alertsEnabled ?: true
-                if (alertsOn) {
-                    val maxHum = cfg?.alertHumidityMaxPct ?: room.archetype.scientificAlertHumidityMaxPct
-                    val minHum = cfg?.alertHumidityMinPct ?: 30.0f
-                    val minTemp = cfg?.alertTempMinC ?: room.archetype.scientificAlertTempMinC
-                    val maxTemp = cfg?.alertTempMaxC ?: room.archetype.scientificAlertTempMaxC
-                    val citation = room.archetype.standardCitation
-
-                    val humHighKey = "room_hum_high_${room.channelId}"
-                    val humLowKey = "room_hum_low_${room.channelId}"
-                    val humSustained = forceTest || Psychrometrics.isHumiditySustained(room, maxHum, minSustainedHours = 4.0f)
-                    if (room.humidityPct >= maxHum && humSustained) {
-                        val outdoorDryerMsg = if (outdoor != null && !room.archetype.isOutdoor &&
-                            room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3 > 1.0f
-                        ) {
-                            " Outdoor air is drier; open a window to ventilate."
-                        } else {
-                            " Consider running a dehumidifier or extractor fan."
-                        }
-                        dispatchCriterionAlert(
-                            key = humHighKey,
-                            notifId = 1000 + idx,
-                            title = "${room.roomName}: sustained high humidity (${room.humidityPct.toInt()}% RH)",
-                            body = "Sustained above ${maxHum.toInt()}% RH limit for 4h+ ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg",
-                            channelId = room.channelId
-                        )
-                    } else if (room.humidityPct < maxHum - 1.5f) {
-                        clearCriterionCooldown(humHighKey)
-                    }
-
-                    if (!room.archetype.isOutdoor && room.humidityPct <= minHum) {
-                        dispatchCriterionAlert(
-                            key = humLowKey,
-                            notifId = 1100 + idx,
-                            title = "${room.roomName}: dry air (${room.humidityPct.toInt()}% RH)",
-                            body = "Below ${minHum.toInt()}% RH minimum comfort threshold ($citation).",
-                            channelId = room.channelId
-                        )
-                    } else {
-                        clearCriterionCooldown(humLowKey)
-                    }
-
-                    val tempKey = "room_temp_${room.channelId}"
-                    if (room.temperatureC >= maxTemp || room.temperatureC <= minTemp) {
-                        val reason = if (room.temperatureC >= maxTemp) {
-                            "above ${settings.tempUnit.format(maxTemp)} maximum limit"
-                        } else {
-                            "below ${settings.tempUnit.format(minTemp)} minimum limit"
-                        }
-                        dispatchCriterionAlert(
-                            key = tempKey,
-                            notifId = 2000 + idx,
-                            title = "${room.roomName}: temperature $reason",
-                            body = "Current ${settings.tempUnit.format(room.temperatureC)} is $reason ($citation).",
-                            channelId = room.channelId
-                        )
-                    } else {
-                        clearCriterionCooldown(tempKey)
-                    }
-                }
-
-                // 2. Mould & condensation criterion (ASHRAE 160)
+                // 1. Mould & condensation criterion (ASHRAE 160)
                 val mouldKey = "mould_risk_${room.channelId}"
                 if (settings.mouldRiskNotifications && !room.archetype.isOutdoor && room.mouldRisk == MouldRiskLevel.HIGH) {
                     dispatchCriterionAlert(
@@ -256,29 +194,36 @@ class WeatherSyncWorker(
                     clearCriterionCooldown(mouldKey)
                 }
 
-                // 3. Smart window ventilation criterion (indoor vs outdoor absolute humidity)
+                // 2. Smart window ventilation criterion (requires sustained elevated humidity above scientific limit, never 60% RH)
                 val ventKey = "vent_advice_${room.channelId}"
                 if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null && outdoor.channelId != room.channelId) {
                     val absDiff = room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
-                    if (room.humidityPct >= room.archetype.idealHumidityMax && absDiff >= 1.2f) {
+                    val humLimit = room.archetype.scientificAlertHumidityMaxPct
+                    val humSustained = forceTest || Psychrometrics.isHumiditySustained(
+                        room = room,
+                        thresholdPct = humLimit,
+                        minSustainedHours = 4.0f
+                    )
+                    if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f) {
                         dispatchCriterionAlert(
                             key = ventKey,
                             notifId = 4000 + idx,
                             title = "Open window in ${room.roomName}",
                             body = String.format(
                                 Locale.UK,
-                                "Outdoor air carries %.1f g/m³ less moisture than indoors (%.0f%% RH) and will naturally dry the room.",
-                                absDiff,
-                                room.humidityPct
+                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% limit for 4h+) and outdoor air carries %.1f g/m³ less moisture.",
+                                room.humidityPct,
+                                humLimit,
+                                absDiff
                             ),
                             channelId = room.channelId
                         )
-                    } else {
+                    } else if (room.humidityPct < humLimit - 1.5f || absDiff < 0.8f) {
                         clearCriterionCooldown(ventKey)
                     }
                 }
 
-                // 4. Sensor low battery criterion
+                // 3. Sensor low battery criterion
                 val battKey = "low_batt_${room.channelId}"
                 if (settings.lowBatteryNotifications && room.batteryLow) {
                     dispatchCriterionAlert(

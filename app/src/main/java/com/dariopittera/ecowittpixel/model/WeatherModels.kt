@@ -523,8 +523,8 @@ object Psychrometrics {
         val tempDiff = indoor.temperatureC - outdoor.temperatureC
 
         return when {
-            indoor.humidityPct >= indoor.archetype.idealHumidityMax && absDiff >= 1.0f ->
-                "Open window: outdoor air carries ${String.format("%.1f", absDiff)} g/m³ less water vapour and will dry this room"
+            indoor.humidityPct >= indoor.archetype.scientificAlertHumidityMaxPct && absDiff >= 1.5f ->
+                "Open window: indoor humidity is elevated (${indoor.humidityPct.toInt()}% RH) and outdoor air carries ${String.format("%.1f", absDiff)} g/m³ less water vapour"
             indoor.temperatureC > indoor.archetype.idealTempMaxC && tempDiff >= 1.5f && absDiff >= -0.8f ->
                 "Open window: outdoor air is ${tempUnit.format(outdoor.temperatureC)} and will naturally cool the room"
             absDiff < -1.5f && indoor.humidityPct >= 52f ->
@@ -585,74 +585,6 @@ object AlertEvaluator {
         val outdoor = snapshot.outdoorRoom
 
         snapshot.rooms.forEachIndexed { idx, room ->
-            val cfg = settings.roomConfigs[room.channelId]
-            val alertsOn = cfg?.alertsEnabled ?: true
-            if (alertsOn) {
-                val maxHum = cfg?.alertHumidityMaxPct ?: room.archetype.scientificAlertHumidityMaxPct
-                val minHum = cfg?.alertHumidityMinPct ?: 30.0f
-                val minTemp = cfg?.alertTempMinC ?: room.archetype.scientificAlertTempMinC
-                val maxTemp = cfg?.alertTempMaxC ?: room.archetype.scientificAlertTempMaxC
-                val citation = room.archetype.standardCitation
-
-                if (room.humidityPct >= maxHum && Psychrometrics.isHumiditySustained(room, maxHum, minSustainedHours = 4.0f)) {
-                    val outdoorDryerMsg = if (outdoor != null && !room.archetype.isOutdoor &&
-                        room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3 > 1.0f
-                    ) {
-                        " Outdoor air is drier; open a window to ventilate."
-                    } else {
-                        " Consider running a dehumidifier or extractor fan."
-                    }
-                    breaches.add(
-                        RoomAlertBreach(
-                            key = "room_hum_high_${room.channelId}",
-                            notifId = 1000 + idx,
-                            channelId = room.channelId,
-                            roomName = room.roomName,
-                            severity = AlertSeverity.HIGH_HUMIDITY,
-                            shortBadge = "High RH ${room.humidityPct.toInt()}%",
-                            title = "${room.roomName}: sustained high humidity (${room.humidityPct.toInt()}% RH)",
-                            body = "Sustained above ${maxHum.toInt()}% RH limit for 4h+ ($citation, dew point ${settings.tempUnit.format(room.dewPointC)}).$outdoorDryerMsg"
-                        )
-                    )
-                }
-
-                if (!room.archetype.isOutdoor && room.humidityPct <= minHum) {
-                    breaches.add(
-                        RoomAlertBreach(
-                            key = "room_hum_low_${room.channelId}",
-                            notifId = 1100 + idx,
-                            channelId = room.channelId,
-                            roomName = room.roomName,
-                            severity = AlertSeverity.LOW_HUMIDITY,
-                            shortBadge = "Dry ${room.humidityPct.toInt()}%",
-                            title = "${room.roomName}: dry air (${room.humidityPct.toInt()}% RH)",
-                            body = "Below ${minHum.toInt()}% RH minimum comfort threshold ($citation)."
-                        )
-                    )
-                }
-
-                if (room.temperatureC >= maxTemp || room.temperatureC <= minTemp) {
-                    val isHigh = room.temperatureC >= maxTemp
-                    val reason = if (isHigh) {
-                        "above ${settings.tempUnit.format(maxTemp)} maximum limit"
-                    } else {
-                        "below ${settings.tempUnit.format(minTemp)} minimum limit"
-                    }
-                    breaches.add(
-                        RoomAlertBreach(
-                            key = "room_temp_${room.channelId}",
-                            notifId = 2000 + idx,
-                            channelId = room.channelId,
-                            roomName = room.roomName,
-                            severity = if (isHigh) AlertSeverity.HIGH_TEMP else AlertSeverity.LOW_TEMP,
-                            shortBadge = if (isHigh) "Warm ${settings.tempUnit.format(room.temperatureC)}" else "Cold ${settings.tempUnit.format(room.temperatureC)}",
-                            title = "${room.roomName}: temperature $reason",
-                            body = "Current ${settings.tempUnit.format(room.temperatureC)} is $reason ($citation)."
-                        )
-                    )
-                }
-            }
-
             if (settings.mouldRiskNotifications && !room.archetype.isOutdoor && room.mouldRisk == MouldRiskLevel.HIGH) {
                 breaches.add(
                     RoomAlertBreach(
@@ -670,7 +602,13 @@ object AlertEvaluator {
 
             if (settings.ventilationAdviceNotifications && !room.archetype.isOutdoor && outdoor != null && outdoor.channelId != room.channelId) {
                 val absDiff = room.absoluteHumidityGm3 - outdoor.absoluteHumidityGm3
-                if (room.humidityPct >= room.archetype.idealHumidityMax && absDiff >= 1.2f) {
+                val humLimit = room.archetype.scientificAlertHumidityMaxPct
+                val humSustained = Psychrometrics.isHumiditySustained(
+                    room = room,
+                    thresholdPct = humLimit,
+                    minSustainedHours = 4.0f
+                )
+                if (room.humidityPct >= humLimit && humSustained && absDiff >= 1.5f) {
                     breaches.add(
                         RoomAlertBreach(
                             key = "vent_advice_${room.channelId}",
@@ -682,9 +620,10 @@ object AlertEvaluator {
                             title = "Open window in ${room.roomName}",
                             body = String.format(
                                 java.util.Locale.UK,
-                                "Outdoor air carries %.1f g/m³ less moisture than indoors (%.0f%% RH) and will naturally dry the room.",
-                                absDiff,
-                                room.humidityPct
+                                "Indoor humidity has remained at %.0f%% RH (≥%.0f%% limit for 4h+) and outdoor air carries %.1f g/m³ less moisture.",
+                                room.humidityPct,
+                                humLimit,
+                                absDiff
                             )
                         )
                     )
