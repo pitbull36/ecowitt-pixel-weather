@@ -43,6 +43,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 class EcowittTileService : TileService() {
@@ -68,7 +71,8 @@ class EcowittTileService : TileService() {
                         ?: store.loadWidgetSnapshotCache()?.takeIf { !it.isSimulatedOrPreview }
                         ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
 
-                    if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE ||
+                    val isManualRefresh = requestParams.currentState.lastClickableId == ID_REFRESH_TILE
+                    if (isManualRefresh ||
                         snapshot.isSimulatedOrPreview ||
                         !store.hasSyncedFromPhone()
                     ) {
@@ -88,6 +92,9 @@ class EcowittTileService : TileService() {
                             if (discSnap != null && !discSnap.isSimulatedOrPreview) {
                                 snapshot = discSnap
                             }
+                        }
+                        if (isManualRefresh && !snapshot.isSimulatedOrPreview) {
+                            snapshot = snapshot.copy(lastSyncMs = System.currentTimeMillis())
                         }
                     }
 
@@ -226,10 +233,13 @@ class EcowittTileService : TileService() {
             .setOnClick(ActionBuilders.LoadAction.Builder().build())
             .build()
 
+        val syncDateTimeStr = SimpleDateFormat("dd MMM HH:mm", Locale.UK)
+            .format(Date(snapshot.lastSyncMs))
+
         val footerText = if (breaches.isNotEmpty()) {
-            "Alert: ${breaches.first().shortBadge} • Tap sync"
+            "Alert: ${breaches.first().shortBadge} • $syncDateTimeStr"
         } else {
-            "Tap to sync • ${primaryRoom?.humidityPct?.roundToInt() ?: 50}% RH"
+            "Tap to sync • $syncDateTimeStr"
         }
 
         centerColumn.addContent(
@@ -429,7 +439,7 @@ class EcowittTileService : TileService() {
     }
 
     companion object {
-        private const val RESOURCES_VERSION = "ecowitt_tile_v4"
+        private const val RESOURCES_VERSION = "ecowitt_tile_v5"
         private const val ID_REFRESH_TILE = "id_refresh_tile"
     }
 }
