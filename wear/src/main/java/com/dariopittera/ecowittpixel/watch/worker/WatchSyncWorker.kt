@@ -37,7 +37,13 @@ class WatchSyncWorker(
         val isPhoneNearby = WearDataLayerBridge.hasNearbyPeer(applicationContext)
 
         if (isPhoneNearby) {
-            WearDataLayerBridge.requestSyncFromPhone(applicationContext)
+            val cached = store.loadWidgetSnapshotCache()
+            val isStale = cached == null ||
+                cached.isSimulatedOrPreview ||
+                (System.currentTimeMillis() - cached.lastSyncMs) > 25 * 60 * 1000L
+            if (isStale) {
+                WearDataLayerBridge.requestSyncFromPhone(applicationContext)
+            }
             WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
         } else {
             val settings = store.loadSettings().copy(demoModeEnabled = false)
@@ -64,7 +70,7 @@ class WatchSyncWorker(
         private const val COOLDOWN_MS = 60L * 60L * 1000L
 
         fun schedulePeriodicWatchSync(context: Context) {
-            val req = PeriodicWorkRequestBuilder<WatchSyncWorker>(15, TimeUnit.MINUTES)
+            val req = PeriodicWorkRequestBuilder<WatchSyncWorker>(30, TimeUnit.MINUTES)
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,

@@ -72,6 +72,7 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     val isSyncingWatch: StateFlow<Boolean> = _isSyncingWatch.asStateFlow()
 
     private var pollingJob: Job? = null
+    private var isForegroundActive = false
     private var pendingSelectChannelId: String? = null
 
     private val watchMessageListener = MessageClient.OnMessageReceivedListener { event: MessageEvent ->
@@ -87,12 +88,25 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
         runCatching {
             Wearable.getMessageClient(application).addListener(watchMessageListener)
         }
-        refreshNow()
-        startAutoPolling()
         WeatherSyncWorker.schedulePeriodicSync(application, _settings.value.pollingIntervalMinutes)
     }
 
+    fun onForegroundStart() {
+        isForegroundActive = true
+        refreshNow()
+        startAutoPolling()
+    }
+
+    fun onForegroundStop() {
+        isForegroundActive = false
+        pollingJob?.cancel()
+        pollingJob = null
+    }
+
     override fun onCleared() {
+        isForegroundActive = false
+        pollingJob?.cancel()
+        pollingJob = null
         super.onCleared()
         runCatching {
             Wearable.getMessageClient(getApplication<Application>()).removeListener(watchMessageListener)
@@ -101,10 +115,11 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
 
     private fun startAutoPolling() {
         pollingJob?.cancel()
+        if (!isForegroundActive) return
         pollingJob = viewModelScope.launch {
-            while (isActive) {
+            while (isActive && isForegroundActive) {
                 delay(15_000L)
-                if (!_settings.value.demoModeEnabled) {
+                if (isForegroundActive && !_settings.value.demoModeEnabled) {
                     val updated = _settings.value.applyToSnapshot(
                         apiClient.fetchAtmosphere(_settings.value, _simParams.value)
                     )

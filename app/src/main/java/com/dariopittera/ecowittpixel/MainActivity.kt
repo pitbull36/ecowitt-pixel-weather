@@ -51,6 +51,16 @@ class MainActivity : ComponentActivity() {
         super.attachBaseContext(createNormalizedPhoneContext(newBase))
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.onForegroundStart()
+    }
+
+    override fun onStop() {
+        viewModel.onForegroundStop()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

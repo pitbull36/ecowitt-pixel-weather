@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -29,6 +30,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.dariopittera.ecowittpixel.model.MouldRiskLevel
 import com.dariopittera.ecowittpixel.model.RoomAlertBreach
 import com.dariopittera.ecowittpixel.model.RoomArchetype
@@ -78,59 +82,110 @@ fun WatchCircularDioramaCanvas(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isLifecycleResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
     var gyroTiltX by remember { mutableFloatStateOf(0f) }
     var gyroTiltY by remember { mutableFloatStateOf(0f) }
 
-    DisposableEffect(gyroEnabled, isAmbient) {
-        if (!gyroEnabled || isAmbient) {
+    DisposableEffect(lifecycleOwner, gyroEnabled, isAmbient) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val gravitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        var isRegistered = false
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val gx = (event.values.getOrNull(0) ?: 0f) / 9.81f
+                val gy = (event.values.getOrNull(1) ?: 0f) / 9.81f
+                gyroTiltX = gyroTiltX * 0.84f + (-gx.coerceIn(-0.6f, 0.6f)) * 0.16f
+                gyroTiltY = gyroTiltY * 0.84f + ((gy - 0.35f).coerceIn(-0.5f, 0.5f)) * 0.16f
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+
+        fun unregisterSensor() {
+            if (isRegistered) {
+                runCatching { sensorManager?.unregisterListener(listener) }
+                isRegistered = false
+            }
             gyroTiltX = 0f
             gyroTiltY = 0f
-            onDispose { }
-        } else {
-            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-            val gravitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
-                ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            val listener = object : SensorEventListener {
-                override fun onSensorChanged(event: SensorEvent) {
-                    val gx = (event.values.getOrNull(0) ?: 0f) / 9.81f
-                    val gy = (event.values.getOrNull(1) ?: 0f) / 9.81f
-                    gyroTiltX = gyroTiltX * 0.84f + (-gx.coerceIn(-0.6f, 0.6f)) * 0.16f
-                    gyroTiltY = gyroTiltY * 0.84f + ((gy - 0.35f).coerceIn(-0.5f, 0.5f)) * 0.16f
-                }
+        }
 
-                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        fun registerSensorIfActive() {
+            val shouldRegister = gyroEnabled &&
+                !isAmbient &&
+                gravitySensor != null &&
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            if (shouldRegister && !isRegistered) {
+                isRegistered = sensorManager?.registerListener(
+                    listener,
+                    gravitySensor,
+                    SensorManager.SENSOR_DELAY_UI,
+                    100_000
+                ) == true
+            } else if (!shouldRegister) {
+                unregisterSensor()
             }
-            if (gravitySensor != null) {
-                sensorManager?.registerListener(listener, gravitySensor, SensorManager.SENSOR_DELAY_GAME)
+        }
+
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
+                    registerSensorIfActive()
+                }
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP,
+                Lifecycle.Event.ON_DESTROY -> {
+                    isLifecycleResumed = false
+                    unregisterSensor()
+                }
+                else -> Unit
             }
-            onDispose {
-                sensorManager?.unregisterListener(listener)
-            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        registerSensorIfActive()
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+            unregisterSensor()
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "watch_diorama_anim")
-    val animPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.2831855f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "watch_phase"
-    )
-    val particleProgress by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "watch_particles"
-    )
-
-    val phase = if (isAmbient) 0f else animPhase
-    val particles = if (isAmbient) 0.35f else particleProgress
+    val isInteractiveActive = isLifecycleResumed && !isAmbient
+    val phase: Float
+    val particles: Float
+    if (isInteractiveActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "watch_diorama_anim")
+        val animPhase by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 6.2831855f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 8000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "watch_phase"
+        )
+        val particleProgress by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 5200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "watch_particles"
+        )
+        phase = animPhase
+        particles = particleProgress
+    } else {
+        phase = 0f
+        particles = 0.35f
+    }
 
     val hasTopAlert = breaches.any { it.affectsTopTempArc }
     val hasBottomAlert = breaches.any { it.affectsBottomHumidityArc }

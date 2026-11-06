@@ -59,42 +59,57 @@ class EcowittTileService : TileService() {
             tileScope.launch {
                 try {
                     val store = LocalHistoryStore(applicationContext)
-                    val requestedCount = WearDataLayerBridge.requestSyncFromPhone(applicationContext)
-                    if (requestParams.currentState.lastClickableId == ID_REFRESH_TILE && requestedCount > 0) {
-                        delay(400L)
-                    }
-                    val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
-                    var settings = (dlSettings ?: store.loadSettings()).copy(demoModeEnabled = false)
-                    store.saveSettings(settings)
-
-                    var snapshot = dlSnap
-                        ?: store.loadWidgetSnapshotCache()?.takeIf { !it.isSimulatedOrPreview }
-                        ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
-
+                    var settings = store.loadSettings().copy(demoModeEnabled = false)
+                    val cachedSnap = store.loadWidgetSnapshotCache()?.takeIf { !it.isSimulatedOrPreview }
                     val isManualRefresh = requestParams.currentState.lastClickableId == ID_REFRESH_TILE
-                    if (isManualRefresh ||
-                        snapshot.isSimulatedOrPreview ||
-                        !store.hasSyncedFromPhone()
-                    ) {
-                        val fresh = EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
-                        if (!fresh.isSimulatedOrPreview) {
-                            snapshot = fresh
+                    val isCacheFresh = cachedSnap != null &&
+                        (System.currentTimeMillis() - cachedSnap.lastSyncMs) <= 10 * 60 * 1000L
+
+                    var snapshot: HomeAtmosphereSnapshot
+                    if (!isManualRefresh && isCacheFresh && cachedSnap != null && store.hasSyncedFromPhone()) {
+                        snapshot = cachedSnap
+                    } else {
+                        val requestedCount = if (isManualRefresh || cachedSnap == null) {
+                            WearDataLayerBridge.requestSyncFromPhone(applicationContext)
+                        } else {
+                            0
                         }
-                        if (snapshot.isSimulatedOrPreview || !store.hasSyncedFromPhone()) {
-                            val (discSettings, discSnap) = WearDataLayerBridge.discoverPhoneOrGatewayOnLan(
-                                applicationContext,
-                                store
-                            )
-                            if (discSettings != null) {
-                                settings = discSettings.copy(demoModeEnabled = false)
-                                store.saveSettings(settings)
-                            }
-                            if (discSnap != null && !discSnap.isSimulatedOrPreview) {
-                                snapshot = discSnap
-                            }
+                        if (isManualRefresh && requestedCount > 0) {
+                            delay(400L)
                         }
-                        if (isManualRefresh && !snapshot.isSimulatedOrPreview) {
-                            snapshot = snapshot.copy(lastSyncMs = System.currentTimeMillis())
+                        val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(applicationContext, store)
+                        if (dlSettings != null) {
+                            settings = dlSettings.copy(demoModeEnabled = false)
+                            store.saveSettings(settings)
+                        }
+                        snapshot = dlSnap
+                            ?: cachedSnap
+                            ?: EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+
+                        if (isManualRefresh ||
+                            snapshot.isSimulatedOrPreview ||
+                            !store.hasSyncedFromPhone()
+                        ) {
+                            val fresh = EcowittApiClient(store).fetchAtmosphere(settings, SimulationParameters())
+                            if (!fresh.isSimulatedOrPreview) {
+                                snapshot = fresh
+                            }
+                            if (snapshot.isSimulatedOrPreview || !store.hasSyncedFromPhone()) {
+                                val (discSettings, discSnap) = WearDataLayerBridge.discoverPhoneOrGatewayOnLan(
+                                    applicationContext,
+                                    store
+                                )
+                                if (discSettings != null) {
+                                    settings = discSettings.copy(demoModeEnabled = false)
+                                    store.saveSettings(settings)
+                                }
+                                if (discSnap != null && !discSnap.isSimulatedOrPreview) {
+                                    snapshot = discSnap
+                                }
+                            }
+                            if (isManualRefresh && !snapshot.isSimulatedOrPreview) {
+                                snapshot = snapshot.copy(lastSyncMs = System.currentTimeMillis())
+                            }
                         }
                     }
 
@@ -104,7 +119,7 @@ class EcowittTileService : TileService() {
                     val tileLayout = buildTileLayout(snapshot, settings)
                     val tile = TileBuilders.Tile.Builder()
                         .setResourcesVersion(RESOURCES_VERSION)
-                        .setFreshnessIntervalMillis(5 * 60 * 1000L)
+                        .setFreshnessIntervalMillis(15 * 60 * 1000L)
                         .setTileTimeline(
                             TimelineBuilders.Timeline.fromLayoutElement(tileLayout)
                         )

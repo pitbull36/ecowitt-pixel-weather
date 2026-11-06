@@ -87,6 +87,10 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     val isCheckingOta: StateFlow<Boolean> = _isCheckingOta.asStateFlow()
 
     private var pollingJob: Job? = null
+    private var syncJob: Job? = null
+    private var isForegroundActive = false
+    private var foregroundListenersRegistered = false
+    private var hasUnsushedSurfaceUpdate = false
 
     private val dataLayerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -99,17 +103,19 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val foregroundDataListener = DataClient.OnDataChangedListener { _: DataEventBuffer ->
+        if (!isForegroundActive) return@OnDataChangedListener
         viewModelScope.launch {
             val app = getApplication<Application>()
             val (dlSettings, dlSnap) = WearDataLayerBridge.pullFromDataLayer(app, historyStore)
             if (dlSettings != null || dlSnap != null) {
                 applySyncedPair(dlSettings, dlSnap, "Synced with phone")
-                refreshWatchSurfaces(app)
+                hasUnsushedSurfaceUpdate = true
             }
         }
     }
 
     private val foregroundMessageListener = MessageClient.OnMessageReceivedListener { event: MessageEvent ->
+        if (!isForegroundActive) return@OnMessageReceivedListener
         when (event.path) {
             WearDataLayerBridge.PATH_INSTANT_PUSH -> {
                 viewModelScope.launch {
@@ -121,7 +127,7 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     if (dlSettings != null || dlSnap != null) {
                         applySyncedPair(dlSettings, dlSnap, "Synced with phone")
-                        refreshWatchSurfaces(app)
+                        hasUnsushedSurfaceUpdate = true
                     }
                 }
             }
@@ -145,29 +151,69 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         _breaches = MutableStateFlow(AlertEvaluator.evaluateBreaches(cleanInitial, _settings.value))
         breaches = _breaches.asStateFlow()
 
-        val filter = IntentFilter(ACTION_WATCH_DATA_UPDATED)
-        ContextCompat.registerReceiver(
-            application,
-            dataLayerReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        runCatching {
-            Wearable.getDataClient(application).addListener(foregroundDataListener)
-            Wearable.getMessageClient(application).addListener(foregroundMessageListener)
-        }
         WatchSyncWorker.schedulePeriodicWatchSync(application)
-        syncHybridNow(quiet = false)
         checkWatchOtaStatusQuietly()
-        startAutoRefresh()
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    fun onForegroundStart() {
+        isForegroundActive = true
+        registerForegroundListenersIfNeeded()
+        reloadFromLocalCache()
+        if (!_isAmbient.value) {
+            syncHybridNow(quiet = true, updateWatchSurfaces = false)
+            startAutoRefresh()
+        }
+    }
+
+    fun onForegroundStop() {
+        isForegroundActive = false
+        stopAutoRefreshAndSync()
+        unregisterForegroundListenersIfNeeded()
+        if (hasUnsushedSurfaceUpdate) {
+            hasUnsushedSurfaceUpdate = false
+            refreshWatchSurfaces(getApplication())
+        }
+    }
+
+    private fun registerForegroundListenersIfNeeded() {
+        if (foregroundListenersRegistered) return
+        val app = getApplication<Application>()
+        val filter = IntentFilter(ACTION_WATCH_DATA_UPDATED)
+        runCatching {
+            ContextCompat.registerReceiver(
+                app,
+                dataLayerReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }
+        runCatching {
+            Wearable.getDataClient(app).addListener(foregroundDataListener)
+            Wearable.getMessageClient(app).addListener(foregroundMessageListener)
+        }
+        foregroundListenersRegistered = true
+    }
+
+    private fun unregisterForegroundListenersIfNeeded() {
+        if (!foregroundListenersRegistered) return
         val app = getApplication<Application>()
         runCatching { app.unregisterReceiver(dataLayerReceiver) }
         runCatching { Wearable.getDataClient(app).removeListener(foregroundDataListener) }
         runCatching { Wearable.getMessageClient(app).removeListener(foregroundMessageListener) }
+        foregroundListenersRegistered = false
+    }
+
+    private fun stopAutoRefreshAndSync() {
+        pollingJob?.cancel()
+        pollingJob = null
+        syncJob?.cancel()
+        syncJob = null
+    }
+
+    override fun onCleared() {
+        stopAutoRefreshAndSync()
+        unregisterForegroundListenersIfNeeded()
+        super.onCleared()
     }
 
     private fun applySyncedPair(
@@ -214,23 +260,29 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startAutoRefresh() {
         pollingJob?.cancel()
+        if (!isForegroundActive || _isAmbient.value) {
+            pollingJob = null
+            return
+        }
         pollingJob = viewModelScope.launch {
-            while (isActive) {
+            while (isActive && isForegroundActive && !_isAmbient.value) {
                 val intervalMs = if (_snapshot.value.isSimulatedOrPreview || !historyStore.hasSyncedFromPhone()) {
-                    6_000L
+                    12_000L
                 } else {
-                    18_000L
+                    30_000L
                 }
                 delay(intervalMs)
-                if (!_isAmbient.value) {
-                    syncHybridNow(quiet = true)
+                if (isForegroundActive && !_isAmbient.value) {
+                    syncHybridNow(quiet = true, updateWatchSurfaces = false)
                 }
             }
         }
     }
 
-    fun syncHybridNow(quiet: Boolean = false) {
-        viewModelScope.launch {
+    fun syncHybridNow(quiet: Boolean = false, updateWatchSurfaces: Boolean = !quiet) {
+        if (quiet && (!isForegroundActive || _isAmbient.value)) return
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch {
             if (!quiet) {
                 _statusText.value = "Syncing with phone..."
             }
@@ -267,7 +319,12 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                 historyStore.saveWidgetSnapshotCache(syncedSnap)
                 _breaches.value = AlertEvaluator.evaluateBreaches(syncedSnap, liveSettings)
                 _statusText.value = "Synced with phone"
-                refreshWatchSurfaces(app)
+                if (updateWatchSurfaces) {
+                    refreshWatchSurfaces(app)
+                    hasUnsushedSurfaceUpdate = false
+                } else {
+                    hasUnsushedSurfaceUpdate = true
+                }
                 return@launch
             }
 
@@ -313,7 +370,12 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
                 else -> "Synced with phone"
             }
 
-            refreshWatchSurfaces(app)
+            if (updateWatchSurfaces) {
+                refreshWatchSurfaces(app)
+                hasUnsushedSurfaceUpdate = false
+            } else {
+                hasUnsushedSurfaceUpdate = true
+            }
         }
     }
 
@@ -362,7 +424,12 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
     fun setAmbientMode(ambient: Boolean) {
         _isAmbient.value = ambient
         if (ambient) {
+            stopAutoRefreshAndSync()
             _ambientMinuteTick.value += 1
+        } else if (isForegroundActive) {
+            reloadFromLocalCache()
+            syncHybridNow(quiet = true, updateWatchSurfaces = false)
+            startAutoRefresh()
         }
     }
 

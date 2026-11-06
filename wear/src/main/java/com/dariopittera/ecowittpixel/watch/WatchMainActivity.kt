@@ -100,6 +100,16 @@ class WatchMainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.onForegroundStart()
+    }
+
+    override fun onStop() {
+        viewModel.onForegroundStop()
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
