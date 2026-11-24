@@ -117,16 +117,6 @@ class WeatherSyncWorker(
             val cooldownPrefs = context.getSharedPreferences("ecowitt_alert_cooldowns", Context.MODE_PRIVATE)
             val nowMs = System.currentTimeMillis()
 
-            val openAppIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                0,
-                openAppIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
             fun dispatchCriterionAlert(
                 key: String,
                 notifId: Int,
@@ -138,21 +128,16 @@ class WeatherSyncWorker(
                 if (!canPost) return
                 val lastSentMs = cooldownPrefs.getLong(key, 0L)
                 if (forceTest || (nowMs - lastSentMs) >= COOLDOWN_MS) {
-                    val watchIntent = Intent(context, WatchActionReceiver::class.java).apply {
-                        action = WatchActionReceiver.ACTION_OPEN_ROOM_ON_WATCH
-                        putExtra(WatchActionReceiver.EXTRA_CHANNEL_ID, channelId)
+                    val openAppIntent = Intent(context, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        putExtra(MainActivity.EXTRA_SELECT_CHANNEL_ID, channelId)
                     }
-                    val watchPendingIntent = PendingIntent.getBroadcast(
+                    val pendingIntent = PendingIntent.getActivity(
                         context,
                         notifId,
-                        watchIntent,
+                        openAppIntent,
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                     )
-                    val watchAction = NotificationCompat.Action.Builder(
-                        android.R.drawable.ic_menu_view,
-                        "Open room on watch",
-                        watchPendingIntent
-                    ).build()
 
                     val notif = NotificationCompat.Builder(context, CHANNEL_ID)
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -161,8 +146,6 @@ class WeatherSyncWorker(
                         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setContentIntent(pendingIntent)
-                        .addAction(watchAction)
-                        .extend(NotificationCompat.WearableExtender().addAction(watchAction))
                         .setAutoCancel(true)
                         .build()
                     NotificationManagerCompat.from(context).notify(notifId, notif)
@@ -317,13 +300,22 @@ class WeatherSyncWorker(
                 } else {
                     "Notification channel verified and ready."
                 }
+                val testAppIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val testPendingIntent = PendingIntent.getActivity(
+                    context,
+                    9999,
+                    testAppIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
                 val notif = NotificationCompat.Builder(context, CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("Ecowitt criteria notifications active")
                     .setContentText(summary)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setContentIntent(pendingIntent)
+                    .setContentIntent(testPendingIntent)
                     .setAutoCancel(true)
                     .build()
                 NotificationManagerCompat.from(context).notify(9999, notif)

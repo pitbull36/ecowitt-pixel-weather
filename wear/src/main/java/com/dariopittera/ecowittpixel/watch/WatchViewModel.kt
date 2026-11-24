@@ -393,6 +393,15 @@ class WatchViewModel(application: Application) : AndroidViewModel(application) {
         _carouselIndex.value = index.coerceIn(0, totalPages - 1)
     }
 
+    fun focusRoomOverview(channelId: String) {
+        val idx = _snapshot.value.rooms.indexOfFirst { it.channelId == channelId }
+        if (idx >= 0) {
+            _carouselIndex.value = idx
+        }
+        _detailChannelId.value = null
+        _historyScrubFraction.value = 1f
+    }
+
     fun openRoomDetail(channelId: String) {
         val idx = _snapshot.value.rooms.indexOfFirst { it.channelId == channelId }
         if (idx >= 0) {

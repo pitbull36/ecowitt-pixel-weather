@@ -61,10 +61,13 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    private var requestedChannelId by androidx.compose.runtime.mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        intent?.getStringExtra(EXTRA_SELECT_CHANNEL_ID)?.let { chId ->
+        requestedChannelId = intent?.getStringExtra(EXTRA_SELECT_CHANNEL_ID)
+        requestedChannelId?.let { chId ->
             viewModel.selectRoomByChannelId(chId)
         }
 
@@ -81,6 +84,12 @@ class MainActivity : ComponentActivity() {
                 val isCheckingOta by viewModel.isCheckingOta.collectAsState()
 
                 var activeTab by rememberSaveable { mutableIntStateOf(0) }
+
+                LaunchedEffect(requestedChannelId) {
+                    if (requestedChannelId != null) {
+                        activeTab = 0
+                    }
+                }
 
                 val notifPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission(),
@@ -202,6 +211,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.getStringExtra(EXTRA_SELECT_CHANNEL_ID)?.let { chId ->
+            requestedChannelId = chId
             viewModel.selectRoomByChannelId(chId)
         }
     }

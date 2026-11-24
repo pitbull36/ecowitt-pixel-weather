@@ -78,6 +78,7 @@ class EcowittComplicationService : SuspendingComplicationDataSourceService() {
         val openIntent = Intent(applicationContext, WatchMainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(WatchMainActivity.EXTRA_CHANNEL_ID, room.channelId)
+            putExtra(WatchMainActivity.EXTRA_OPEN_OVERVIEW, true)
         }
         val tapPendingIntent = PendingIntent.getActivity(
             applicationContext,

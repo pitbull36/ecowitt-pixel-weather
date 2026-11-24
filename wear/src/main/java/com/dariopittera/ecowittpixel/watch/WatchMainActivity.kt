@@ -122,11 +122,16 @@ class WatchMainActivity : ComponentActivity() {
         val uriCh = intent.data?.lastPathSegment
         val targetChannel = extraCh ?: uriCh
         if (!targetChannel.isNullOrBlank()) {
-            viewModel.openRoomDetail(targetChannel)
+            if (intent.getBooleanExtra(EXTRA_OPEN_OVERVIEW, false)) {
+                viewModel.focusRoomOverview(targetChannel)
+            } else {
+                viewModel.openRoomDetail(targetChannel)
+            }
         }
     }
 
     companion object {
         const val EXTRA_CHANNEL_ID = "extra_channel_id"
+        const val EXTRA_OPEN_OVERVIEW = "extra_open_overview"
     }
 }
